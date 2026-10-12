@@ -14,6 +14,7 @@ def sample_ws() -> Worksheet:
     rng = np.random.default_rng(42)
     n = 40
     x = rng.normal(50, 5, n)
+    mix = rng.dirichlet([2, 2, 2], n)
     return Worksheet("Sample", pd.DataFrame({
         "Y": 3 + 0.8 * x + rng.normal(0, 2, n),
         "X": x,
@@ -28,6 +29,8 @@ def sample_ws() -> Worksheet:
         # balanced crossed gage layout: 5 parts x 2 operators x 4 replicates
         "Part": np.array([f"p{i % 5}" for i in range(n)], dtype=object),
         "Operator": np.array([f"o{(i // 5) % 2}" for i in range(n)], dtype=object),
+        # mixture components summing to 1
+        "M1": mix[:, 0], "M2": mix[:, 1], "M3": mix[:, 2],
     }))
 
 

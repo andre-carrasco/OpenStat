@@ -32,6 +32,13 @@ OVERRIDES = {
     "gage.crossed": {"part": "Part", "operator": "Operator", "tolerance": "20"},
     "gage.nested": {"part": "Part", "operator": "Operator"},
     "gage.attribute": {"rating": "Pass", "sample": "Part", "appraiser": "Operator"},
+    # defective counts must not exceed the subgroup size
+    "cc.p": {"column": "Count"},
+    "cc.np": {"column": "Count"},
+    "cc.laney_p": {"column": "Count"},
+    "quality.capability_binomial": {"column": "Count"},
+    "doe.analyze_factorial": {"factors": ["Pass", "Seq", "Operator"]},
+    "doe.analyze_mixture": {"components": ["M1", "M2", "M3"]},
 }
 
 
