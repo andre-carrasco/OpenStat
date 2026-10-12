@@ -69,7 +69,12 @@ class Console(QWidget):
     def run(self, analysis_id: str, **parameters) -> None:
         """Run a registered analysis on the current worksheet and show its output."""
         ws = self.window_.current_worksheet()
-        self.window_.add_result(registry.get(analysis_id).func(ws, **parameters), ws)
+        a = registry.get(analysis_id)
+        by_name = {other.name: other for other in self.window_.project.worksheets}
+        for p in a.params:   # a worksheet may be given by its name
+            if p.kind == "worksheet" and isinstance(parameters.get(p.name), str):
+                parameters[p.name] = by_name[parameters[p.name]]
+        self.window_.add_result(a.func(ws, **parameters), ws)
 
     def analyses(self, text: str = "") -> None:
         for a in registry.all_analyses():
@@ -102,5 +107,6 @@ class Console(QWidget):
         new_df = self.namespace.get("df")
         if isinstance(new_df, pd.DataFrame):
             ws.df = normalize_frame(new_df)   # whatever the command produced, in worksheet form
+            ws.recalculate()
         self.window_.worksheets_changed()
         return output

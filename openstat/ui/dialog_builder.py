@@ -14,10 +14,11 @@ def candidate_columns(ws: Worksheet, param: Param) -> list[str]:
 
 
 class AnalysisDialog(QDialog):
-    def __init__(self, analysis: Analysis, ws: Worksheet, parent=None):
+    def __init__(self, analysis: Analysis, ws: Worksheet, parent=None, worksheets: list[Worksheet] | None = None):
         super().__init__(parent)
         self.analysis = analysis
         self.ws = ws
+        self.worksheets = worksheets or [ws]   # what a "worksheet" parameter offers
         self.widgets: dict[str, object] = {}
         self.setWindowTitle(tr(analysis.title))
         form = QFormLayout(self)
@@ -75,6 +76,11 @@ class AnalysisDialog(QDialog):
             return w
         if param.kind == "text":
             return QLineEdit(str(param.default or ""))
+        if param.kind == "worksheet":
+            w = QComboBox()
+            for other in self.worksheets:
+                w.addItem(other.name, other)
+            return w
         raise ValueError(f"Unknown parameter kind: {param.kind}")
 
     def values(self) -> dict:
@@ -83,7 +89,7 @@ class AnalysisDialog(QDialog):
             w = self.widgets[param.name]
             if param.kind == "columns":
                 out[param.name] = [item.text() for item in w.selectedItems()]
-            elif param.kind in ("column", "choice"):
+            elif param.kind in ("column", "choice", "worksheet"):
                 out[param.name] = w.currentData()
             elif param.kind in ("number", "int"):
                 out[param.name] = w.value()

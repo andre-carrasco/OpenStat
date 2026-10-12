@@ -56,15 +56,23 @@ _COMPARE = {
 }
 
 
-def _resolve(ws: Worksheet, name: str):
+def _column(ws: Worksheet, name: str) -> str | None:
+    """The worksheet column that `name` refers to: exact, ignoring case, or by position (C1, C2, ...)."""
     names = ws.column_names()
     if name in names:
-        return ws.df[name].to_numpy()
+        return name
     lowered = {n.lower(): n for n in names}
     if name.lower() in lowered:
-        return ws.df[lowered[name.lower()]].to_numpy()
+        return lowered[name.lower()]
     if name[:1] in "Cc" and name[1:].isdigit() and 1 <= int(name[1:]) <= len(names):
-        return ws.df.iloc[:, int(name[1:]) - 1].to_numpy()
+        return names[int(name[1:]) - 1]
+    return None
+
+
+def _resolve(ws: Worksheet, name: str):
+    column = _column(ws, name)
+    if column is not None:
+        return ws.df[column].to_numpy()
     if name.lower() in CONSTANTS:
         return CONSTANTS[name.lower()]
     raise ExpressionError(f"Unknown name: {name}")
@@ -111,6 +119,16 @@ def _eval(node, ws):
             raise ExpressionError(f"Unknown function: {node.func.id}")
         return func(*[_eval(a, ws) for a in node.args])
     raise ExpressionError("Unsupported expression")
+
+
+def referenced_columns(ws: Worksheet, expression: str) -> set[str]:
+    """Names of the worksheet columns that `expression` uses."""
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise ExpressionError(f"Invalid expression: {exc.msg}") from exc
+    columns = {_column(ws, node.id) for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    return columns - {None}
 
 
 def evaluate(ws: Worksheet, expression: str):

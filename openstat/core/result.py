@@ -43,6 +43,7 @@ class Result:
     blocks: list = field(default_factory=list)
     stored: dict = field(default_factory=dict)
     worksheets: list = field(default_factory=list)
+    formulas: dict = field(default_factory=dict)
 
     def heading(self, text: str) -> "Result":
         self.blocks.append(("heading", text))
@@ -72,6 +73,11 @@ class Result:
 
     def store(self, name: str, values) -> "Result":
         self.stored[name] = list(values)
+        return self
+
+    def formula(self, name: str, expression: str) -> "Result":
+        """Ask the application to attach a formula to column `name`; an empty one detaches it."""
+        self.formulas[name] = expression
         return self
 
     def figures(self) -> list:

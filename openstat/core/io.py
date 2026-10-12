@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from openstat.core.worksheet import Worksheet
+from openstat.core.worksheet import Worksheet, parse_date
 
 IMPORT_FILTER = "Data (*.csv *.txt *.tsv *.xlsx *.xls);;All files (*)"
 
@@ -29,6 +29,10 @@ def import_file(path: str | Path) -> list[Worksheet]:
                 converted = pd.to_numeric(df[name].astype(str).str.replace(",", ".", regex=False), errors="coerce")
                 if converted.notna().sum() == df[name].notna().sum():
                     df[name] = converted
+                    continue
+                dates = pd.to_datetime([None if pd.isna(v) else parse_date(v) for v in df[name]])
+                if df[name].notna().any() and dates.notna().sum() == df[name].notna().sum():
+                    df[name] = dates
     return [Worksheet(path.stem, df)]
 
 

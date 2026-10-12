@@ -14,6 +14,7 @@ from typing import Any, Callable
 #   choice   one of `choices`                   -> str
 #   bool     checkbox                           -> bool
 #   text     free text                          -> str
+#   worksheet  one worksheet of the project     -> Worksheet (the console also takes its name)
 
 
 @dataclass

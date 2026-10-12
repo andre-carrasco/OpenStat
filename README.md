@@ -20,8 +20,8 @@ Requer Python 3.11 ou mais novo. O idioma segue o sistema (pt-BR ou inglês) e p
 
 | Menu | Conteúdo |
 |---|---|
-| Dados | ordenar, subconjunto, empilhar/desempilhar, transpor, postos, padronizar, recodificar |
-| Calc | calculadora de fórmulas, estatísticas de colunas e linhas, dados padronizados e aleatórios, distribuições de probabilidade |
+| Dados | ordenar, subconjunto, mesclar e dividir planilhas, copiar colunas, excluir linhas, empilhar/desempilhar, transpor, concatenar, postos, padronizar, recodificar, alterar tipo, extrair partes de data/hora |
+| Calc | calculadora de fórmulas, fórmulas vinculadas a colunas, estatísticas de colunas e linhas, dados padronizados, em malha e aleatórios, variáveis indicadoras, matrizes, distribuições de probabilidade |
 | Estatística básica | descritiva, resumo gráfico, Z e t, t pareado, proporções, taxas de Poisson, variâncias, correlação, covariância, normalidade, outlier (Grubbs), ajuste de Poisson |
 | Regressão | linear com diagnósticos, linha ajustada, stepwise, melhores subconjuntos, não linear, logística binária/ordinal/nominal, Poisson, PLS, ortogonal |
 | ANOVA | um fator (Tukey, Fisher, Dunnett, Welch), modelo linear geral, igualdade de variâncias, aninhada, efeitos mistos, MANOVA, efeitos principais e interação |
@@ -42,9 +42,12 @@ Projetos são salvos em `.ostat` (um zip com as planilhas em Parquet e a saída 
 por CSV, TXT ou Excel, ou colados da área de transferência. A saída pode ser exportada em HTML, PDF
 ou Word.
 
+As colunas são numéricas, de texto (`-T` no cabeçalho) ou de data/hora (`-D`). Datas são digitadas
+como `aaaa-mm-dd` ou `dd/mm/aaaa` (`mm/dd/aaaa` em inglês), com hora opcional. Uma coluna com fórmula
+(**Calc > Atribuir fórmula à coluna**, `=` no cabeçalho) é recalculada sempre que a planilha muda.
+
 ### Ainda não incluído
 
-- Colunas de data/hora como tipo próprio (são tratadas como texto).
 - Teste de Dixon, comparações de Hsu (MCB), experimentos definitive screening, análise de garantia
   e Gage R&R expandido.
 - Leitura de arquivos de outros programas estatísticos.
@@ -78,9 +81,9 @@ def resumo(ws, columns, digits=2):
     return res
 ```
 
-Tipos de parâmetro: `columns`, `column`, `number`, `int`, `choice`, `bool`, `text`. Um `Result`
-aceita `text`, `heading`, `pre`, `table`, `figure` (matplotlib), `store` (nova coluna) e
-`worksheet` (nova planilha).
+Tipos de parâmetro: `columns`, `column`, `number`, `int`, `choice`, `bool`, `text`, `worksheet`.
+Um `Result` aceita `text`, `heading`, `pre`, `table`, `figure` (matplotlib), `store` (nova coluna),
+`formula` (fórmula de coluna) e `worksheet` (nova planilha).
 
 ## Testes
 

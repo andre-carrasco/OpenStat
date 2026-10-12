@@ -103,6 +103,78 @@ def test_standardize_rank_recode(ws):
     assert data.recode(ws, "A", "1:2=low; 3:4=high").stored["Coded_A"] == ["low", "low", "high", "high"]
 
 
+def test_merge_split_copy(ws):
+    other = Worksheet("O", pd.DataFrame({"G": np.array(["x", "z"], dtype=object), "A": [100.0, 300.0]}))
+    df = data.merge(ws, other, ["G"], data.JOINS[1]).worksheets[0][1]
+    assert df.columns.tolist() == ["A", "B", "G", "A_2"]
+    assert df["A"].tolist() == [1.0, 3.0] and df["A_2"].tolist() == [100.0, 100.0]
+    assert len(data.merge(ws, other, ["G"], data.JOINS[0]).worksheets[0][1]) == 5
+    side = data.merge(ws, other).worksheets[0][1]
+    assert side.columns.tolist() == ["A", "B", "G", "G_2", "A_2"] and len(side) == 4
+    with pytest.raises(ValueError):
+        data.merge(ws, other, ["B"])
+
+    parts = dict(data.split(ws, "G").worksheets)
+    assert parts["W (G = x)"]["A"].tolist() == [1.0, 3.0]
+    assert data.copy_columns(ws, ["A"], "B > 10").worksheets[0][1]["A"].tolist() == [2.0, 3.0]
+
+
+def test_concatenate_delete_rows(ws):
+    assert data.concatenate(ws, ["G", "A"], "-").stored["Concat"] == ["x-1", "y-2", "x-3", "y-4"]
+    assert data.delete_rows(ws, "1, 3:9").worksheets[0][1]["A"].tolist() == [2.0]
+    assert data.delete_rows(ws, "2;3").worksheets[0][1]["A"].tolist() == [1.0, 4.0]
+    for bad in ["", "0", "3:2", "a"]:
+        with pytest.raises(ValueError):
+            data.delete_rows(ws, bad)
+
+
+def test_dates_change_type_and_extract():
+    ws = Worksheet("D", pd.DataFrame({"When": [pd.Timestamp("2024-03-15 13:45:10"), pd.NaT, pd.Timestamp("2023-12-31")],
+                                      "Text": np.array(["2024-02-29", "2021-01-01", None], dtype=object),
+                                      "N": [1.0, 2.5, np.nan]}))
+    assert ws.is_datetime("When") and not ws.is_numeric("When")
+    assert [ws.get_text(r, 0) for r in range(3)] == ["2024-03-15 13:45:10", "", "2023-12-31"]
+    assert data.extract_date(ws, "When", "Quarter").stored["When_Quarter"][0] == 1.0
+    assert data.extract_date(ws, "When", "Day of the week (1 = Monday)").stored["When_Dayoftheweek"][2] == 7.0
+    assert data.extract_date(ws, "When", "Minute").stored["When_Minute"][0] == 45.0
+    assert data.extract_date(ws, "Text", "Day of the year").stored["Text_Dayoftheyear"][:2] == [60.0, 1.0]
+    with pytest.raises(ValueError):
+        data.extract_date(ws, "N")
+
+    serial = data.change_type(ws, "When", "Numeric").stored["When_num"]
+    assert serial[2] == 45291.0 and serial[1] is None      # spreadsheet day number of 2023-12-31
+    assert serial[0] == pytest.approx(45366 + (13 * 3600 + 45 * 60 + 10) / 86400)
+    assert data.change_type(ws, "N", "Date/time").stored["N_date"][0] == pd.Timestamp("1899-12-31")
+    assert data.change_type(ws, "Text", "Date/time").stored["Text_date"][0] == pd.Timestamp("2024-02-29")
+    assert data.change_type(ws, "N", "Text").stored["N_text"] == ["1", "2.5", None]
+    assert data.change_type(ws, "Text", "Numeric").stored["Text_num"][0] == pytest.approx(45351.0)
+
+
+def test_indicator_mesh(ws):
+    res = calc.indicator(ws, "G")
+    assert res.stored == {"G_x": [1.0, 0.0, 1.0, 0.0], "G_y": [0.0, 1.0, 0.0, 1.0]}
+    res = calc.mesh(None, 0, 1, 2, 0, 2, 3, "X + 10 * Y")
+    assert res.stored["X"] == [0.0, 1.0] * 3 and res.stored["Y"] == [0.0, 0.0, 1.0, 1.0, 2.0, 2.0]
+    assert res.stored["Z"] == [0.0, 1.0, 10.0, 11.0, 20.0, 21.0]
+
+
+def test_matrices():
+    ws = Worksheet("M", pd.DataFrame({"a": [2.0, 1.0], "b": [1.0, 3.0], "c": [1.0, 0.0], "d": [0.0, 1.0]}))
+    ops = calc.MATRIX_OPS
+    assert calc.matrix(ws, ["a", "b"], ops[0]).worksheets[0][1].to_numpy().tolist() == [[5.0, 5.0], [5.0, 10.0]]
+    assert calc.matrix(ws, ["a", "b"], ops[1], ["c", "d"]).worksheets[0][1].to_numpy().tolist() == [[2, 1], [1, 3]]
+    inverse = calc.matrix(ws, ["a", "b"], ops[2]).worksheets[0][1].to_numpy()
+    assert inverse @ np.array([[2.0, 1.0], [1.0, 3.0]]) == pytest.approx(np.eye(2))
+    eigen = calc.matrix(ws, ["a", "b"], ops[3])
+    assert eigen.blocks[1][1][0]["Eigenvalue"].tolist() == pytest.approx([(5 + 5 ** 0.5) / 2, (5 - 5 ** 0.5) / 2])
+    summary = calc.matrix(ws, ["a", "b"], ops[4]).blocks[1][1][0]
+    assert summary.iloc[0].tolist() == pytest.approx([5.0, 5.0, 2])
+    with pytest.raises(ValueError):
+        calc.matrix(ws, ["a", "b", "c"], ops[2])
+    with pytest.raises(ValueError):
+        calc.matrix(Worksheet("S", pd.DataFrame({"a": [1.0, 2.0], "b": [2.0, 4.0]})), ["a", "b"], ops[2])
+
+
 def test_anderson_darling_matches_scipy():
     x = np.random.default_rng(3).normal(size=80)
     ad, p = anderson_darling_normal(x)

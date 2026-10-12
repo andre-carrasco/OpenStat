@@ -7,6 +7,7 @@ import pandas as pd
 from openstat.core.expression import evaluate
 from openstat.core.registry import Param, analysis
 from openstat.core.result import Result
+from openstat.core.worksheet import Worksheet, format_value
 from openstat.i18n import tr
 from openstat.stats import distributions as dists
 
@@ -126,4 +127,122 @@ def probability(ws, function=FUNCTIONS[1], distribution=dists.NAMES[0], p1=0.0, 
     res.table(table.head(200), digits=6, index=False)
     if column:
         res.store(f"{'Inv' if function == FUNCTIONS[2] else 'Prob'}_{column}", np.asarray(y, dtype=float).tolist())
+    return res
+
+
+@analysis("calc.formula", menu=MENU, title="Assign Formula to Column",
+          params=[Param("store", "Column", "text", default="Formula"),
+                  Param("expression", "Formula (empty = remove the formula)", "text")])
+def assign_formula(ws, store, expression=""):
+    res = Result("Assign Formula to Column")
+    if expression.strip():
+        evaluate(ws, expression)
+        res.text(f"{store} = {expression}")
+        res.text(tr("The column is recalculated whenever the worksheet changes."))
+    else:
+        res.text(f"{store}: {tr('formula removed')}")
+    return res.formula(store, expression)
+
+
+MAX_LEVELS = 100
+
+
+@analysis("calc.indicator", menu=MENU, title="Make Indicator Variables",
+          params=[Param("column", "Column", "column", numeric=False)])
+def indicator(ws, column):
+    col = ws.df[column]
+    levels = sorted(col.dropna().unique())
+    if len(levels) > MAX_LEVELS:
+        raise ValueError("Too many distinct values to make indicator variables")
+    res = Result("Make Indicator Variables")
+    rows = []
+    for level in levels:
+        name = f"{column}_{format_value(level)}"
+        res.store(name, np.where(col.isna(), np.nan, (col == level).astype(float)).tolist())
+        rows.append({"Value": format_value(level), "Column": name, "N": int((col == level).sum())})
+    res.table(pd.DataFrame(rows), index=False)
+    return res
+
+
+@analysis("calc.mesh", menu=MENU, title="Make Mesh Data",
+          params=[Param("x_from", "X from", "number", default=-1.0),
+                  Param("x_to", "X to", "number", default=1.0),
+                  Param("x_n", "Number of X positions", "int", default=11, minimum=2, maximum=2000),
+                  Param("y_from", "Y from", "number", default=-1.0),
+                  Param("y_to", "Y to", "number", default=1.0),
+                  Param("y_n", "Number of Y positions", "int", default=11, minimum=2, maximum=2000),
+                  Param("expression", "Z as a function of X and Y (optional)", "text")])
+def mesh(ws, x_from=-1.0, x_to=1.0, x_n=11, y_from=-1.0, y_to=1.0, y_n=11, expression=""):
+    x, y = np.meshgrid(np.linspace(x_from, x_to, x_n), np.linspace(y_from, y_to, y_n))
+    grid = pd.DataFrame({"X": x.ravel(), "Y": y.ravel()})
+    res = Result("Make Mesh Data").store("X", grid["X"].tolist()).store("Y", grid["Y"].tolist())
+    if expression.strip():
+        z = evaluate(Worksheet("mesh", grid), expression)
+        res.store("Z", np.broadcast_to(np.asarray(z, dtype=float), len(grid)).tolist())
+        res.text(f"Z = {expression}")
+    res.text(f"{tr('Stored in columns')}: {', '.join(res.stored)} ({len(grid)})")
+    return res
+
+
+MATRIX_OPS = ["Cross-product (A'A)", "Multiply (A x B)", "Inverse", "Eigen analysis",
+              "Determinant, trace and rank"]
+
+
+def _matrix(ws, columns) -> np.ndarray:
+    frame = ws.df[list(columns)]
+    frame = frame[frame.notna().any(axis=1)]   # rows below the end of these columns
+    if frame.isna().any().any():
+        raise ValueError("The matrix has missing values")
+    return frame.to_numpy(dtype=float)
+
+
+def _square(m: np.ndarray) -> np.ndarray:
+    if m.shape[0] != m.shape[1]:
+        raise ValueError("The matrix must be square")
+    return m
+
+
+@analysis("calc.matrix", menu=MENU, title="Matrices",
+          params=[Param("columns", "Columns of matrix A", "columns"),
+                  Param("operation", "Operation", "choice", default=MATRIX_OPS[0], choices=MATRIX_OPS),
+                  Param("columns_b", "Columns of matrix B", "columns", optional=True)])
+def matrix(ws, columns, operation=MATRIX_OPS[0], columns_b=()):
+    a = _matrix(ws, columns)
+    res = Result("Matrices")
+    res.text(f"{tr(operation)} - A: {a.shape[0]} x {a.shape[1]}")
+    if operation == MATRIX_OPS[0]:
+        out = pd.DataFrame(a.T @ a, columns=list(columns))
+    elif operation == MATRIX_OPS[1]:
+        if not columns_b:
+            raise ValueError("Select the columns of matrix B")
+        b = _matrix(ws, columns_b)
+        if a.shape[1] != b.shape[0]:
+            raise ValueError("The number of columns of A must equal the number of rows of B")
+        out = pd.DataFrame(a @ b, columns=[f"AB{i + 1}" for i in range(b.shape[1])])
+    elif operation == MATRIX_OPS[2]:
+        try:
+            out = pd.DataFrame(np.linalg.inv(_square(a)), columns=[f"Inv{i + 1}" for i in range(a.shape[1])])
+        except np.linalg.LinAlgError:
+            raise ValueError("The matrix is singular") from None
+    elif operation == MATRIX_OPS[3]:
+        _square(a)
+        if np.allclose(a, a.T):
+            values, vectors = np.linalg.eigh(a)
+            order = np.argsort(values)[::-1]
+        else:
+            values, vectors = np.linalg.eig(a)
+            if np.iscomplexobj(values) and np.abs(values.imag).max() > 1e-12:
+                raise ValueError("The matrix has complex eigenvalues")
+            values, vectors = values.real, vectors.real
+            order = np.argsort(np.abs(values))[::-1]
+        values, vectors = values[order], vectors[:, order]
+        res.table(pd.DataFrame({"Eigenvalue": values}, index=pd.RangeIndex(1, len(values) + 1)), digits=6)
+        out = pd.DataFrame(vectors, columns=[f"Vector{i + 1}" for i in range(len(values))])
+    else:
+        _square(a)
+        res.table(pd.DataFrame({"Determinant": [np.linalg.det(a)], "Trace": [np.trace(a)],
+                                "Matrix rank": [int(np.linalg.matrix_rank(a))]}), digits=6, index=False)
+        return res
+    res.table(out.head(50), digits=6, index=False)
+    res.worksheet(f"{ws.name} ({tr(operation)})", out)
     return res

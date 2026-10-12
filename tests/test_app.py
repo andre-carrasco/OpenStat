@@ -48,6 +48,33 @@ def test_console_edits_the_worksheet_and_runs_analyses(window):
     assert "basic.describe" in console.execute("analyses('descr')")
 
 
+def test_formulas_dates_and_worksheet_parameters(window):
+    from PySide6.QtCore import Qt
+
+    from openstat.ui.dialog_builder import AnalysisDialog
+
+    console, ws, model = window.console, window.current_worksheet(), window.current_view().model_
+    console.execute("run('calc.formula', store='Total', expression='A + B')")
+    assert ws.df["Total"].tolist() == [3.0, 6.0, 9.0, 13.0]
+    model.set_cells([(0, 0, "10")])                       # editing the grid recalculates
+    console.execute("df['B'] = 0")                        # and so does the console
+    assert ws.df["Total"].tolist() == [10.0, 2.0, 3.0, 4.0]
+    assert model.headerData(2, Qt.Horizontal).startswith("C3 =")
+    assert model.headerData(2, Qt.Horizontal, Qt.ToolTipRole) == "= A + B"
+    assert "own column" in console.execute("run('calc.formula', store='Total', expression='Total + 1')")
+
+    model.set_cells([(0, 3, "2024-05-01"), (1, 3, "2024-05-02")])
+    assert model.headerData(3, Qt.Horizontal).startswith("C4-D") and model.data(model.index(1, 3)) == "2024-05-02"
+
+    first = window.project.worksheets[0]
+    dialog = AnalysisDialog(registry.get("data.merge"), ws, worksheets=window.project.worksheets)
+    assert dialog.values()["other"] is first and dialog.values()["by"] == []
+    dialog.accept()                                       # the matching columns are optional
+    assert dialog.result() == AnalysisDialog.Accepted
+    console.execute("run('data.merge', other='Data')")
+    assert window.current_worksheet().name == "Data + Data" and window.current_worksheet().ncols == 2 * ws.ncols
+
+
 def test_console_multiline_and_history(window):
     console = window.console
     assert console.execute("for i in range(2):") == "" and console.pending

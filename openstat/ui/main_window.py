@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
         if ws.ncols == 0 and any(p.kind in ("column", "columns") for p in a.params):
             QMessageBox.information(self, "OpenStat", tr("The worksheet has no data."))
             return
-        dialog = AnalysisDialog(a, ws, self)
+        dialog = AnalysisDialog(a, ws, self, self.project.worksheets)
         if dialog.exec() != AnalysisDialog.Accepted:
             return
         self._guarded(lambda: self.add_result(a.func(ws, **dialog.values()), ws))
@@ -302,7 +302,9 @@ class MainWindow(QMainWindow):
     def add_result(self, result: Result, ws: Worksheet) -> None:
         for name, values in result.stored.items():
             ws.add_column(name, values)
-        if result.stored:
+        for name, expression in result.formulas.items():
+            ws.set_formula(name, expression)
+        if result.stored or result.formulas:
             self.worksheets_changed()
         for name, df in result.worksheets:
             self.add_worksheet(Worksheet(name, df))

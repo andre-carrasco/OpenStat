@@ -34,6 +34,11 @@ class WorksheetModel(QAbstractTableModel):
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.ToolTipRole and orientation == Qt.Horizontal and section < self.ws.ncols:
+            name = self.ws.df.columns[section]
+            if name in self.ws.formulas:
+                error = self.ws.formula_errors.get(name)
+                return f"= {self.ws.formulas[name]}" + (f"\n{tr(error)}" if error else "")
         if role != Qt.DisplayRole:
             return None
         if orientation == Qt.Vertical:
@@ -41,8 +46,12 @@ class WorksheetModel(QAbstractTableModel):
         label = f"C{section + 1}"
         if section < self.ws.ncols:
             name = self.ws.df.columns[section]
-            if not self.ws.is_numeric(name):
+            if self.ws.is_datetime(name):
+                label += "-D"
+            elif not self.ws.is_numeric(name):
                 label += "-T"
+            if name in self.ws.formulas:
+                label += " ="
             if name != f"C{section + 1}":
                 return f"{label}\n{name}"
         return f"{label}\n"
