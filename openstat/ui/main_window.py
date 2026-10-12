@@ -194,7 +194,10 @@ class MainWindow(QMainWindow):
         for name, values in result.stored.items():
             ws.add_column(name, values)
         if result.stored:
-            self.current_view().refresh()
+            for i in range(self.tabs.count()):
+                self.tabs.widget(i).refresh()
+        for name, df in result.worksheets:
+            self.add_worksheet(Worksheet(name, df))
         index = len(self.project.outputs)
         self.project.outputs.append(OutputItem(tr(result.title), result.to_html(anchor=f"r{index}")))
         self._refresh_output(scroll_to=index)

@@ -1,1 +1,1 @@
-from openstat.stats import basic  # noqa: F401
+from openstat.stats import basic, calc, data  # noqa: F401

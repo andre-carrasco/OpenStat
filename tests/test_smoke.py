@@ -8,6 +8,14 @@ from openstat.core.result import Result
 ANALYSES = registry.all_analyses()
 
 
+# Values for parameters that have no usable default
+OVERRIDES = {
+    "data.subset": {"condition": "Y > mean(Y)"},
+    "data.recode": {"mapping": "A=1; B=2"},
+    "calc.calculator": {"expression": "Y + 2 * X"},
+}
+
+
 def default_values(a, ws):
     """Dialog values with sensible column picks for a generic worksheet."""
     numeric = ws.numeric_columns()
@@ -15,7 +23,7 @@ def default_values(a, ws):
     values, used = {}, 0
     for p in a.params:
         if p.kind == "columns":
-            values[p.name] = numeric[used:used + 2] if p.numeric else text[:1]
+            values[p.name] = [numeric[(used + i) % len(numeric)] for i in range(2)] if p.numeric else text[:1]
             used += 2 if p.numeric else 0
         elif p.kind == "column":
             if p.optional:
@@ -25,6 +33,7 @@ def default_values(a, ws):
                 used += 1
             else:
                 values[p.name] = text[0]
+    values.update(OVERRIDES.get(a.id, {}))
     return values
 
 

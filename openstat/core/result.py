@@ -42,6 +42,7 @@ class Result:
     title: str
     blocks: list = field(default_factory=list)
     stored: dict = field(default_factory=dict)
+    worksheets: list = field(default_factory=list)
 
     def heading(self, text: str) -> "Result":
         self.blocks.append(("heading", text))
@@ -53,6 +54,16 @@ class Result:
 
     def table(self, df: pd.DataFrame, title: str | None = None, digits: int = 4, index: bool = True) -> "Result":
         self.blocks.append(("table", (df, title, digits, index)))
+        return self
+
+    def pre(self, text: str) -> "Result":
+        """Monospaced text, for character graphics and listings."""
+        self.blocks.append(("pre", text))
+        return self
+
+    def worksheet(self, name: str, df: pd.DataFrame) -> "Result":
+        """Ask the application to open `df` as a new worksheet."""
+        self.worksheets.append((name, df))
         return self
 
     def figure(self, fig) -> "Result":
@@ -76,6 +87,8 @@ class Result:
                 parts.append(f"<h3>{html.escape(tr(payload))}</h3>")
             elif kind == "text":
                 parts.append(f"<p>{html.escape(payload).replace(chr(10), '<br>')}</p>")
+            elif kind == "pre":
+                parts.append(f"<pre>{html.escape(payload)}</pre>")
             elif kind == "table":
                 parts.append(_table_html(*payload))
             elif kind == "figure":

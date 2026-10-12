@@ -6,4 +6,4 @@ def new_figure(width: float = 6.0, height: float = 4.0) -> Figure:
     return Figure(figsize=(width, height), layout="constrained")
 
 
-from openstat.graphs import basic  # noqa: E402,F401
+from openstat.graphs import basic, relation  # noqa: E402,F401
