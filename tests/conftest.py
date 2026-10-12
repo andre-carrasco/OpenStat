@@ -23,6 +23,8 @@ def sample_ws() -> Worksheet:
         "Pass": np.array(["no", "yes"], dtype=object)[(rng.random(n) < 0.7).astype(int)],
         "Block": np.array([f"b{i}" for i in range(10)], dtype=object)[np.arange(n) // 4],
         "Seq": np.array(["AB", "BA"], dtype=object)[np.arange(n) % 2],
+        # two batches nested within each group, five observations per batch
+        "Batch": np.array([f"{'ABCD'[i % 4]}{(i // 4) % 2}" for i in range(n)], dtype=object),
     }))
 
 

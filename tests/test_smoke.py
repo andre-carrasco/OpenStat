@@ -20,6 +20,12 @@ OVERRIDES = {
     "tables.crosstab": {"rows": "Group", "cols": "Pass"},
     "nonpar.friedman": {"treatment": "Group", "block": "Block"},
     "equiv.crossover": {"sequence": "Seq"},
+    "reg.logistic": {"response": "Pass"},
+    "reg.poisson": {"response": "Count"},
+    "reg.ordinal": {"categorical": []},
+    "reg.nominal": {"categorical": []},
+    "anova.nested": {"factor_a": "Group", "factor_b": "Batch"},
+    "anova.interaction": {"factor1": "Group", "factor2": "Pass"},
 }
 
 

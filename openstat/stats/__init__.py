@@ -1,1 +1,2 @@
-from openstat.stats import basic, calc, data, equivalence, nonparametric, tables  # noqa: F401
+from openstat.stats import (anova, basic, calc, data, equivalence, nonparametric, regression,  # noqa: F401
+                            tables)
