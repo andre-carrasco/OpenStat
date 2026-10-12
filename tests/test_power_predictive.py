@@ -27,6 +27,55 @@ def test_t_power_matches_statsmodels():
         NormalIndPower().power(0.4, 25, 0.05, ratio=0))
 
 
+def test_poisson_rate_power():
+    za, zb = sps.norm.isf(0.05), sps.norm.isf(0.1)
+    # one sample, one-sided: n = ((za sqrt(r0) + zb sqrt(r1)) / (r1 - r0))^2
+    n1 = int(np.ceil(((za * np.sqrt(2.0) + zb * np.sqrt(3.0)) / (3.0 - 2.0)) ** 2))
+    row = table(power.power_one_rate(None, 0, 3.0, 0.9, 2.0, 0.05, GREATER)).iloc[0]
+    assert row["Sample size"] == n1 and row["Power"] >= 0.9
+    assert power.one_rate_power(n1 - 1, 2.0, 3.0, 0.05, GREATER) < 0.9
+    assert power.one_rate_power(20, 2.0, 2.0, 0.05, NOT_EQUAL) == pytest.approx(0.05)
+    assert power.one_rate_power(20, 2.0, 1.2, 0.05, LESS) > power.one_rate_power(20, 2.0, 1.6, 0.05, LESS)
+    # two samples, one-sided: n = (za + zb)^2 (r1 + r2) / (r1 - r2)^2 per group
+    n2 = int(np.ceil((za + zb) ** 2 * (3.0 + 2.0) / (3.0 - 2.0) ** 2))
+    row = table(power.power_two_rates(None, 0, 3.0, 0.9, 2.0, 0.05, GREATER)).iloc[0]
+    assert row["Sample size per group"] == n2
+    solved = table(power.power_two_rates(None, n2, 0.0, 0.9, 2.0, 0.05, GREATER)).iloc[0]
+    assert 2.9 < solved["Comparison rate"] <= 3.0
+    with pytest.raises(ValueError):
+        power.power_one_rate(None, 0, 2.0, 0.9, 2.0)
+
+
+def test_design_power_variants():
+    assert table(power.power_plackett_burman(None, 12, 11, 2, 2.0, 0.0)).iloc[0]["Power"] == pytest.approx(
+        power.factorial_power(2, 12, 11, 2.0, 1.0, 0.05))
+    with pytest.raises(ValueError):
+        power.power_plackett_burman(None, 10, 5, 2, 2.0, 0.0)
+    # a single factor with main effects only is the one-way ANOVA
+    assert power.general_factorial_power(6, [3], 1, 1.2, 1.0, 0.05) == [pytest.approx(power.anova_power(6, 3, 1.2, 1.0, 0.05))]
+    by_factor = power.general_factorial_power(3, [2, 4], 2, 1.0, 1.0, 0.05)
+    assert by_factor[0] > by_factor[1]                        # fewer levels: more runs behind each mean
+    assert power.general_factorial_power(1, [2, 4], 2, 1.0, 1.0, 0.05) == [0.0, 0.0]   # no error df
+    res = power.power_general_factorial(None, "2, 4", 2, 0, 1.0, 0.9)
+    row = table(res).iloc[0]
+    assert row["Power"] >= 0.9 and table(res, 1)["Power"].min() == pytest.approx(row["Power"])
+    assert min(power.general_factorial_power(int(row["Replicates"]) - 1, [2, 4], 2, 1.0, 1.0, 0.05)) < 0.9
+    assert power.parse_levels("2;3 4") == [2, 3, 4]
+    for bad in ["", "1, 3", "a"]:
+        with pytest.raises(ValueError):
+            power.parse_levels(bad)
+
+
+def test_equivalence_power_crossover():
+    n, sd, alpha = 12, 1.0, 0.05
+    crit = sps.t.isf(alpha, 2 * n - 2)
+    se = sd / np.sqrt(n)
+    expected = sps.nct.cdf(-crit, 2 * n - 2, (0.1 - 1) / se) - sps.nct.cdf(crit, 2 * n - 2, (0.1 + 1) / se)
+    assert power.equivalence_power(n, 0.1, -1, 1, sd, alpha, False, crossover=True) == pytest.approx(expected)
+    row = table(power.power_equivalence(None, power.EQUIVALENCE_DESIGNS[2], 0, 0.1, 0.9, -1, 1, sd, alpha)).iloc[0]
+    assert row["Power"] >= 0.9 and "Subjects per sequence" in row.index
+
+
 def test_sample_sizes_match_textbook_values():
     # difference of one standard deviation, power 0.9, alpha 0.05, two-sided
     assert table(power.power_two_sample_t(None, 0, 1.0, 0.9))["Sample size per group"].iloc[0] == 23

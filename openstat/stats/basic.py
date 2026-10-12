@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import integrate
 from scipy import stats as sps
 
 from openstat.core.registry import Param, analysis
@@ -74,6 +75,24 @@ def describe(ws, columns, by=None, more=False):
     res.table(pd.DataFrame(rows, index=index))
     if more:
         res.table(pd.DataFrame(extra, index=index))
+    return res
+
+
+@analysis("basic.store_describe", menu=MENU, title="Store Descriptive Statistics",
+          params=[VARIABLES, Param("by", "By variable", "column", numeric=False, optional=True)])
+def store_describe(ws, columns, by=None):
+    rows = []
+    for name in columns:
+        groups = ws.df.groupby(by, sort=True)[name] if by else [(None, ws.df[name])]
+        for level, values in groups:
+            row = {"Variable": name}
+            if by:
+                row["By" if by == "Variable" else by] = level
+            rows.append({**row, **describe_values(values), **more_values(values)})
+    frame = pd.DataFrame(rows)
+    res = Result("Store Descriptive Statistics")
+    res.worksheet(f"{ws.name} ({tr('statistics')})", frame)
+    res.text(f"{tr('New worksheet')}: {len(frame)} x {frame.shape[1]}")
     return res
 
 
@@ -542,12 +561,48 @@ def grubbs(values, alpha=0.05) -> dict:
             "Outlier": float(x[i]), "G": float(g), "P-Value": float(p)}
 
 
+def dixon_tail(q: float, n: int) -> float:
+    """P(r10 > q) for the largest of n normal observations.
+
+    Given the smallest value x and the largest z, r10 exceeds q when the other n - 2 values all lie
+    below z - q(z - x); that probability is integrated over the joint density of x and z.
+    """
+    def integrand(z, x):
+        inside = sps.norm.cdf(z - q * (z - x)) - sps.norm.cdf(x)
+        return sps.norm.pdf(x) * sps.norm.pdf(z) * inside ** (n - 2)
+    value, _ = integrate.dblquad(integrand, -8, 8, lambda x: x, lambda x: 8)
+    return float(min(max(n * (n - 1) * value, 0.0), 1.0))
+
+
+DIXON_MAX_N = 100
+
+
+def dixon(values) -> dict:
+    """Dixon's Q test (ratio r10) for one outlier at either end (two-sided)."""
+    x = np.sort(clean(values))
+    n = len(x)
+    if n < 3 or n > DIXON_MAX_N or x[-1] == x[0]:
+        raise ValueError("Dixon's test needs 3 to 100 non-identical observations")
+    spread = x[-1] - x[0]
+    low, high = (x[1] - x[0]) / spread, (x[-1] - x[-2]) / spread
+    q = max(low, high)
+    return {"N": n, "Minimum": float(x[0]), "Maximum": float(x[-1]), "Outlier": float(x[-1] if high >= low else x[0]),
+            "Q": float(q), "P-Value": min(1.0, 2 * dixon_tail(q, n))}
+
+
+OUTLIER_TESTS = ["Grubbs", "Dixon's Q (r10)"]
+
+
 @analysis("basic.outlier", menu=MENU, title="Outlier Test",
-          params=[VARIABLES, Param("alpha", "Significance level", "number", default=0.05, minimum=0.0001, maximum=0.5)])
-def outlier_test(ws, columns, alpha=0.05):
-    rows = {name: grubbs(ws.df[name], alpha) for name in columns}
+          params=[VARIABLES, Param("alpha", "Significance level", "number", default=0.05, minimum=0.0001, maximum=0.5),
+                  Param("test", "Test", "choice", default=OUTLIER_TESTS[0], choices=OUTLIER_TESTS)])
+def outlier_test(ws, columns, alpha=0.05, test=OUTLIER_TESTS[0]):
+    if test == OUTLIER_TESTS[0]:
+        rows = {name: grubbs(ws.df[name], alpha) for name in columns}
+    else:
+        rows = {name: dixon(ws.df[name]) for name in columns}
     res = Result("Outlier Test")
-    res.text(f"{tr('Grubbs test')}    α = {alpha:g}")
+    res.text(f"{tr('Grubbs test' if test == OUTLIER_TESTS[0] else 'Dixon Q test')}    α = {alpha:g}")
     res.table(_frame(rows))
     for name, row in rows.items():
         found = row["P-Value"] < alpha

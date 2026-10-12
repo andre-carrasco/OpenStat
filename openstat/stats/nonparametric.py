@@ -176,3 +176,51 @@ def runs_test(ws, columns, use_k=False, k=0.0):
     res.text(tr("H0: the order of the data is random"))
     return res.table(_frame(rows))
 
+
+MAX_PAIRWISE = 2000   # observations; the number of pairs grows with its square
+
+
+def _pairwise_sample(ws, column: str) -> np.ndarray:
+    x = clean(ws.df[column])
+    if len(x) < 2:
+        raise ValueError(f"{column}: not enough data")
+    if len(x) > MAX_PAIRWISE:
+        raise ValueError("Too many observations for pairwise statistics")
+    return x
+
+
+def _pairwise_result(title: str, name: str, values: np.ndarray, label: str) -> Result:
+    res = Result(title)
+    res.table(pd.DataFrame([{"Number of pairs": len(values), label: float(np.median(values))}]), index=False)
+    res.text(f"{tr('Stored in columns')}: {name}")
+    return res.store(name, values.tolist())
+
+
+@analysis("nonpar.pairwise_averages", menu=MENU, title="Pairwise Averages", params=[Param("column", "Variable", "column")])
+def pairwise_averages(ws, column):
+    values = walsh_averages(_pairwise_sample(ws, column))
+    return _pairwise_result("Pairwise Averages", f"Averages_{column}", values, "Median of the averages")
+
+
+@analysis("nonpar.pairwise_differences", menu=MENU, title="Pairwise Differences",
+          params=[Param("sample1", "Sample 1", "column"), Param("sample2", "Sample 2", "column")])
+def pairwise_differences(ws, sample1, sample2):
+    values = np.subtract.outer(_pairwise_sample(ws, sample1), _pairwise_sample(ws, sample2)).ravel()
+    return _pairwise_result("Pairwise Differences", f"Differences_{sample1}_{sample2}", values,
+                            "Median of the differences")
+
+
+@analysis("nonpar.pairwise_slopes", menu=MENU, title="Pairwise Slopes",
+          params=[Param("y", "Y variable", "column"), Param("x", "X variable", "column")])
+def pairwise_slopes(ws, y, x):
+    frame = ws.data([y, x])
+    if len(frame) > MAX_PAIRWISE:
+        raise ValueError("Too many observations for pairwise statistics")
+    yv, xv = frame[y].to_numpy(dtype=float), frame[x].to_numpy(dtype=float)
+    i, j = np.triu_indices(len(frame), k=1)
+    distinct = xv[i] != xv[j]
+    if not distinct.any():
+        raise ValueError("The X variable needs at least two different values")
+    values = (yv[j] - yv[i])[distinct] / (xv[j] - xv[i])[distinct]
+    return _pairwise_result("Pairwise Slopes", f"Slopes_{y}_{x}", values, "Median slope (Theil-Sen)")
+

@@ -5,7 +5,7 @@ import pytest
 from scipy import stats as sps
 
 from openstat.core.worksheet import Worksheet
-from openstat.stats import basic, equivalence, nonparametric, tables
+from openstat.stats import basic, equivalence, nonparametric, resampling, tables
 from openstat.stats._tests import GREATER, LESS, NOT_EQUAL
 
 
@@ -136,6 +136,138 @@ def test_grubbs_nist_example():
     out = basic.grubbs(data)
     assert out["G"] == pytest.approx(2.4687, abs=1e-4)
     assert out["Outlier"] == 245.57 and out["P-Value"] < 0.05
+
+
+def test_dixon_matches_published_critical_values():
+    # Critical values of r10 from Dixon (1951) and Rorabacher (1991), with their upper-tail probabilities
+    for n, q, tail in [(3, 0.941, 0.05), (3, 0.970, 0.025), (5, 0.642, 0.05), (5, 0.821, 0.005),
+                       (7, 0.507, 0.05), (10, 0.466, 0.025)]:
+        assert basic.dixon_tail(q, n) == pytest.approx(tail, abs=1.5e-3)
+    assert basic.dixon_tail(0.0, 6) == pytest.approx(1.0, abs=1e-6)
+    # the usual textbook example: Q = 0.455 is below the 95% critical value 0.466
+    out = basic.dixon([0.189, 0.167, 0.187, 0.183, 0.186, 0.182, 0.181, 0.184, 0.181, 0.177])
+    assert out["Q"] == pytest.approx(0.4545, abs=1e-4) and out["Outlier"] == 0.167
+    assert 0.05 < out["P-Value"] < 0.10
+    assert basic.dixon([1.0, 2.0, 3.0, 4.0, 40.0])["P-Value"] < 0.01
+    with pytest.raises(ValueError):
+        basic.dixon([1.0, 1.0, 1.0])
+
+
+def test_outlier_test_choice_and_store_describe(ws):
+    ws.df.loc[0, "A"] = 60.0
+    for test in basic.OUTLIER_TESTS:
+        res = basic.outlier_test(ws, ["A"], 0.05, test)
+        assert table(res).loc["A", "Outlier"] == 60.0 and table(res).loc["A", "P-Value"] < 0.05
+    frame = basic.store_describe(ws, ["A", "B"], "G").worksheets[0][1]
+    assert frame.shape[0] == 6 and frame["G"].tolist() == ["g1", "g2", "g3"] * 2
+    row = frame[(frame["Variable"] == "B") & (frame["G"] == "g2")].iloc[0]
+    values = ws.df.loc[ws.df["G"] == "g2", "B"]
+    assert row["Mean"] == pytest.approx(values.mean()) and row["Variance"] == pytest.approx(values.var(ddof=1))
+    assert len(basic.store_describe(ws, ["A"]).worksheets[0][1]) == 1
+
+
+def test_bootstrap_and_randomization(ws):
+    a, b = ws.df["A"].to_numpy(), ws.df["B"].to_numpy()
+    res = resampling.bootstrap_one_sample(ws, ["A"], "Mean", 4000, 95.0, seed=1)
+    row = table(res).loc["A"]
+    assert row["Mean"] == pytest.approx(a.mean())
+    assert row["Bootstrap StDev"] == pytest.approx(a.std(ddof=0) / np.sqrt(len(a)), rel=0.08)
+    assert row["CI Lower"] < a.mean() < row["CI Upper"]
+    again = table(resampling.bootstrap_one_sample(ws, ["A"], "Mean", 4000, 95.0, seed=1)).loc["A"]
+    assert again["CI Lower"] == row["CI Lower"]
+    median = table(resampling.bootstrap_one_sample(ws, ["A"], "Median", 500, 90.0, seed=2)).loc["A"]
+    assert median["Median"] == np.median(a)
+
+    diff = table(resampling.bootstrap_two_sample(ws, "A", "B", 4000, 95.0, seed=3), 1).iloc[0]
+    assert diff["Difference"] == pytest.approx(a.mean() - b.mean())
+    assert diff["Bootstrap StDev"] == pytest.approx(np.sqrt(a.var() / len(a) + b.var() / len(b)), rel=0.08)
+
+    one = table(resampling.randomization_one_sample(ws, ["A"], a.mean() - 0.3, NOT_EQUAL, 5000, seed=4)).loc["A"]
+    assert one["P-Value"] == pytest.approx(sps.ttest_1samp(a, a.mean() - 0.3).pvalue, abs=0.05)
+    assert table(resampling.randomization_one_sample(ws, ["A"], 5.0, GREATER, 500, seed=4)).loc["A", "P-Value"] == 0.0
+    assert table(resampling.randomization_one_sample(ws, ["A"], 5.0, LESS, 500, seed=4)).loc["A", "P-Value"] == 1.0
+
+    two = table(resampling.randomization_two_sample(ws, "A", "B", NOT_EQUAL, 5000, seed=5), 1).iloc[0]
+    ref = sps.permutation_test((a, b), lambda x, y: x.mean() - y.mean(), n_resamples=5000, random_state=5)
+    assert two["P-Value"] == pytest.approx(ref.pvalue, abs=0.03)
+    assert resampling.permuted_differences(a, b, 50, np.random.default_rng(0)).shape == (50,)
+
+
+def test_ordinal_measures_and_kappa():
+    counts = np.array([[12.0, 5.0, 2.0], [6.0, 9.0, 7.0], [1.0, 4.0, 14.0]])
+    r, c = np.nonzero(counts)
+    rows = np.repeat(r, counts[r, c].astype(int))
+    cols = np.repeat(c, counts[r, c].astype(int))
+    out = tables.ordinal_measures(counts)
+    assert out["Kendall's tau-b"] == pytest.approx(sps.kendalltau(rows, cols).statistic)
+    assert out["Somers' D (columns dependent)"] == pytest.approx(sps.somersd(rows, cols).statistic)
+    assert out["Somers' D (rows dependent)"] == pytest.approx(sps.somersd(cols, rows).statistic)
+    conc, disc = out["Concordant pairs"], out["Discordant pairs"]
+    assert out["Goodman-Kruskal gamma"] == pytest.approx((conc - disc) / (conc + disc)) and conc > disc
+
+    from sklearn.metrics import cohen_kappa_score
+    ws = Worksheet(df=pd.DataFrame({"r": rows.astype(float), "c": cols.astype(float)}))
+    res = tables.cross_tabulation(ws, "r", "c", measures=True)
+    assert table(res, 4).iloc[0]["Kendall's tau-b"] == pytest.approx(out["Kendall's tau-b"])
+    assert table(res, 5).iloc[0]["Kappa"] == pytest.approx(cohen_kappa_score(rows, cols))
+    assert tables.ordered(["10", "9", "2"]) == ["2", "9", "10"] and tables.ordered(["b", "a"]) == ["a", "b"]
+
+
+def test_mcnemar():
+    from statsmodels.stats.contingency_tables import mcnemar
+
+    before = ["no"] * 30 + ["yes"] * 30
+    after = ["no"] * 18 + ["yes"] * 12 + ["no"] * 3 + ["yes"] * 27
+    ws = Worksheet(df=pd.DataFrame({"before": np.array(before, dtype=object), "after": np.array(after, dtype=object)}))
+    res = tables.mcnemar(ws, "before", "after")
+    row = table(res, 1).iloc[0]
+    assert row["Discordant pairs"] == 15 and row["Difference"] == pytest.approx((12 - 3) / 60)
+    assert row["Exact P-Value"] == pytest.approx(mcnemar([[18, 12], [3, 27]], exact=True).pvalue)
+    assert row["CI Lower"] < row["Difference"] < row["CI Upper"]
+    with pytest.raises(ValueError):
+        tables.mcnemar(Worksheet(df=pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": [1.0, 2.0, 1.0]})), "a", "b")
+
+
+def test_cochran_mantel_haenszel():
+    layers = {"s1": [[10, 5], [4, 12]], "s2": [[8, 9], [3, 14]], "s3": [[15, 6], [7, 10]]}
+    records = [(("t", "c")[i], ("y", "n")[j], name)
+               for name, t in layers.items() for i in range(2) for j in range(2) for _ in range(t[i][j])]
+    ws = Worksheet(df=pd.DataFrame(np.array(records, dtype=object), columns=["trt", "resp", "site"]))
+    res = tables.cochran_mantel_haenszel(ws, "trt", "resp", "site")
+    # categories sort as c < t and n < y, so each layer is seen with rows and columns reversed
+    t = np.array([np.array(v)[::-1, ::-1] for v in layers.values()], dtype=float)
+    n = t.sum(axis=(1, 2))
+    expected = t[:, 0].sum(axis=1) * t[:, :, 0].sum(axis=1) / n
+    variance = (t[:, 0].sum(axis=1) * t[:, 1].sum(axis=1) * t[:, :, 0].sum(axis=1) * t[:, :, 1].sum(axis=1)
+                / (n ** 2 * (n - 1)))
+    chi2 = (abs((t[:, 0, 0] - expected).sum()) - 0.5) ** 2 / variance.sum()
+    row = table(res, 1).iloc[0]
+    assert row["CMH Chi-Square"] == pytest.approx(chi2)
+    assert row["P-Value"] == pytest.approx(sps.chi2.sf(chi2, 1))
+    assert row["Common odds ratio"] == pytest.approx((t[:, 0, 0] * t[:, 1, 1] / n).sum() / (t[:, 0, 1] * t[:, 1, 0] / n).sum())
+    assert table(res).loc["s1", "Odds ratio"] == pytest.approx(10 * 12 / (5 * 4))
+    assert 0 <= table(res, 2).iloc[0]["P-Value"] <= 1
+
+
+def test_table_of_descriptive_statistics(ws):
+    one = table(tables.describe_table(ws, "G", "A"))
+    assert one.loc["g2", "Mean"] == pytest.approx(ws.df.loc[ws.df["G"] == "g2", "A"].mean())
+    two = table(tables.describe_table(ws, "G", "A", "Blk", "N"))
+    assert two.shape == (3, 10) and two.loc["g1", "b0"] == 1
+
+
+def test_pairwise_statistics(ws):
+    a, b = ws.df["A"].to_numpy(), ws.df["B"].to_numpy()
+    res = nonparametric.pairwise_averages(ws, "A")
+    assert len(res.stored["Averages_A"]) == 30 * 31 // 2
+    assert table(res).iloc[0, 1] == pytest.approx(np.median(nonparametric.walsh_averages(a)))
+    res = nonparametric.pairwise_differences(ws, "A", "B")
+    assert len(res.stored["Differences_A_B"]) == 900
+    assert table(res).iloc[0, 1] == pytest.approx(np.median(np.subtract.outer(a, b)))
+    res = nonparametric.pairwise_slopes(ws, "B", "A")
+    assert table(res).iloc[0, 1] == pytest.approx(sps.theilslopes(b, a).slope)
+    with pytest.raises(ValueError):
+        nonparametric.pairwise_slopes(Worksheet(df=pd.DataFrame({"y": [1.0, 2.0], "x": [3.0, 3.0]})), "y", "x")
 
 
 def test_normality_tests(ws):

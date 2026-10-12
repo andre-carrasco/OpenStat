@@ -1,6 +1,8 @@
 """Power and sample size. In each dialog leave exactly one of sample size, difference and power at 0 to solve it."""
 from __future__ import annotations
 
+from itertools import combinations
+
 import numpy as np
 import pandas as pd
 from scipy import optimize
@@ -227,6 +229,77 @@ def power_two_proportions(ws, n=0, comparison=0.0, power=0.9, p2=0.5, alpha=0.05
                               n, comparison, power, p2, alpha, alternative, "Sample size per group")
 
 
+def one_rate_power(n, rate0, rate1, alpha, alternative) -> float:
+    """Normal-approximation power of the test of H0: rate = rate0 when the true Poisson rate is rate1."""
+    if rate1 <= 0:
+        return 0.0
+    se0, se1 = np.sqrt(rate0 / n), np.sqrt(rate1 / n)
+    if alternative == NOT_EQUAL:
+        crit = sps.norm.isf(alpha / 2)
+        return float(sps.norm.sf((rate0 + crit * se0 - rate1) / se1) + sps.norm.cdf((rate0 - crit * se0 - rate1) / se1))
+    crit = sps.norm.isf(alpha)
+    if alternative == GREATER:
+        return float(sps.norm.sf((rate0 + crit * se0 - rate1) / se1))
+    return float(sps.norm.cdf((rate0 - crit * se0 - rate1) / se1))
+
+
+def two_rate_power(n, rate1, rate2, alpha, alternative) -> float:
+    """Normal-approximation power of the pooled test of two Poisson rates with n observations per group."""
+    if rate1 <= 0 or rate2 <= 0:
+        return 0.0
+    # the difference of the two sample rates has variance (rate1 + rate2) / n, pooled or not
+    return z_power((rate1 - rate2) / np.sqrt((rate1 + rate2) / n), alpha, alternative)
+
+
+COMPARISON_RATE = Param("comparison", "Comparison rate (0 = calculate)", "number", default=1.5, minimum=0.0)
+
+
+def _rate_report(title, power_at, n, comparison, power, baseline, alpha, alternative, size_label) -> Result:
+    if sum([n == 0, comparison == 0, power == 0]) != 1:
+        raise ValueError("Leave exactly one of sample size, comparison rate and power at 0")
+    if power == 0:
+        power = power_at(n, comparison)
+    elif n == 0:
+        if comparison == baseline:
+            raise ValueError("The comparison rate equals the baseline rate; no sample size gives this power")
+        n, _, power = solve(lambda size, _d: power_at(size, comparison), 0, 1.0, power, minimum_n=1)
+    else:
+        lo, hi = (baseline * (1 + 1e-9), baseline * 1e6) if alternative != LESS else (baseline * 1e-9, baseline * (1 - 1e-9))
+        if max(power_at(n, lo), power_at(n, hi)) < power:
+            raise ValueError("The target power cannot be reached with this sample size")
+        comparison = float(optimize.brentq(lambda r: power_at(n, r) - power, lo, hi))
+        power = power_at(n, comparison)
+    res = Result(title)
+    res.text(_notes(alpha, alternative, f"{tr('Baseline rate')} = {baseline:g}    {tr('Normal approximation')}"))
+    res.table(pd.DataFrame([{"Comparison rate": comparison, size_label: n, "Power": power}]), index=False, digits=5)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    grid = np.linspace(baseline * 0.01, max(2 * baseline, 1.5 * comparison), 200)
+    ax.plot(grid, [power_at(n, r) for r in grid], color=BLUE)
+    ax.plot(comparison, power, "o", color=RED)
+    ax.set_ylim(0, 1.02), ax.set_xlabel(tr("Comparison rate")), ax.set_ylabel(tr("Power"))
+    ax.set_title(f"{tr('Power Curve')}: {tr(title)} (n = {n})")
+    return res.figure(fig)
+
+
+@analysis("power.poisson1", menu=MENU, title="Power: 1-Sample Poisson Rate",
+          params=[SIZE, COMPARISON_RATE, POWER,
+                  Param("rate0", "Hypothesized rate", "number", default=1.0, minimum=1e-9), ALPHA, ALTERNATIVE])
+def power_one_rate(ws, n=0, comparison=0.0, power=0.9, rate0=1.0, alpha=0.05, alternative=NOT_EQUAL):
+    return _rate_report("Power: 1-Sample Poisson Rate",
+                        lambda size, r: one_rate_power(size, rate0, r, alpha, alternative),
+                        n, comparison, power, rate0, alpha, alternative, "Sample size")
+
+
+@analysis("power.poisson2", menu=MENU, title="Power: 2-Sample Poisson Rate",
+          params=[SIZE, COMPARISON_RATE, POWER,
+                  Param("rate2", "Baseline rate", "number", default=1.0, minimum=1e-9), ALPHA, ALTERNATIVE])
+def power_two_rates(ws, n=0, comparison=0.0, power=0.9, rate2=1.0, alpha=0.05, alternative=NOT_EQUAL):
+    return _rate_report("Power: 2-Sample Poisson Rate",
+                        lambda size, r: two_rate_power(size, r, rate2, alpha, alternative),
+                        n, comparison, power, rate2, alpha, alternative, "Sample size per group")
+
+
 def anova_power(n: int, levels: int, difference: float, sd: float, alpha: float) -> float:
     """Power of one-way ANOVA when two level means differ by `difference` and the rest sit at the grand mean."""
     df1, df2 = levels - 1, levels * (n - 1)
@@ -272,6 +345,75 @@ def power_factorial(ws, runs=8, terms=7, n=0, difference=0.0, power=0.9, sd=1.0,
                    f"α = {alpha:g}    σ = {sd:g}    {tr('Number of corner points')}: {runs}    "
                    f"{tr('Number of terms in the model')}: {terms}", size_label="Replicates", xlabel="Effect",
                    minimum_n=1)
+
+
+@analysis("power.pb", menu=MENU, title="Power: Plackett-Burman Design",
+          params=[Param("runs", "Number of runs in the design", "int", default=12, minimum=8, maximum=96),
+                  Param("factors", "Number of factors", "int", default=11, minimum=2, maximum=95),
+                  Param("n", "Replicates (0 = calculate)", "int", default=0, minimum=0, maximum=10000),
+                  Param("difference", "Effect (0 = calculate)", "number", default=2.0), POWER, SD, ALPHA])
+def power_plackett_burman(ws, runs=12, factors=11, n=0, difference=0.0, power=0.9, sd=1.0, alpha=0.05):
+    if runs % 4:
+        raise ValueError("The number of runs of a Plackett-Burman design is a multiple of 4")
+    if factors >= runs:
+        raise ValueError("The design has too many factors for this number of runs")
+
+    def power_of(size, diff):
+        return factorial_power(size, runs, factors, diff, sd, alpha)
+    return _report("Power: Plackett-Burman Design", power_of, n, abs(difference), power,
+                   f"α = {alpha:g}    σ = {sd:g}    {tr('Number of runs in the design')}: {runs}    "
+                   f"{tr('Number of factors')}: {factors}", size_label="Replicates", xlabel="Effect", minimum_n=1)
+
+
+def parse_levels(text: str) -> list[int]:
+    """'2, 3, 4' -> the number of levels of each factor."""
+    try:
+        levels = [int(part) for part in text.replace(";", ",").replace(" ", ",").split(",") if part]
+    except ValueError:
+        raise ValueError("Enter the number of levels of each factor, e.g. 2, 3, 4") from None
+    if not levels or min(levels) < 2:
+        raise ValueError("Each factor needs at least two levels")
+    return levels
+
+
+def general_factorial_power(replicates: int, levels: list[int], order: int, difference: float, sd: float,
+                            alpha: float) -> list[float]:
+    """Power for each factor of a full factorial when two of its level means differ by `difference`.
+
+    The model has the main effects and the interactions of up to `order` factors.
+    """
+    total = replicates * int(np.prod(levels))
+    model_df = sum(int(np.prod([levels[i] - 1 for i in subset]))
+                   for size in range(1, order + 1) for subset in combinations(range(len(levels)), size))
+    error_df = total - 1 - model_df
+    if error_df < 1:
+        return [0.0] * len(levels)
+    return [f_power((total / k) * difference ** 2 / (2 * sd ** 2), k - 1, error_df, alpha) for k in levels]
+
+
+@analysis("power.general_factorial", menu=MENU, title="Power: General Full Factorial Design",
+          params=[Param("levels", "Number of levels of each factor (e.g. 2, 3, 4)", "text", default="2, 3"),
+                  Param("order", "Highest order of interaction in the model", "int", default=2, minimum=1, maximum=10),
+                  Param("n", "Replicates (0 = calculate)", "int", default=0, minimum=0, maximum=10000),
+                  Param("difference", "Maximum difference between means (0 = calculate)", "number", default=1.0),
+                  POWER, SD, ALPHA])
+def power_general_factorial(ws, levels="2, 3", order=2, n=0, difference=0.0, power=0.9, sd=1.0, alpha=0.05):
+    counts = parse_levels(levels)
+    order = min(order, len(counts))
+
+    def power_of(size, diff):   # the factor that is hardest to detect decides
+        return min(general_factorial_power(size, counts, order, diff, sd, alpha))
+    res = _report("Power: General Full Factorial Design", power_of, n, abs(difference), power,
+                  f"α = {alpha:g}    σ = {sd:g}    {tr('Highest order of interaction in the model')}: {order}    "
+                  f"{tr('The power shown is that of the factor with the least power.')}",
+                  size_label="Replicates", xlabel="Maximum difference", minimum_n=1)
+    solved = res.blocks[1][1][0].iloc[0]
+    by_factor = general_factorial_power(int(solved["Replicates"]), counts, order, solved["Difference"], sd, alpha)
+    table = pd.DataFrame({"Levels": counts, "Power": by_factor},
+                         index=pd.Index([f"{tr('Factor')} {i + 1}" for i in range(len(counts))], name="Factor"))
+    res.blocks.insert(2, ("table", (table, "Power by factor", 5, True)))
+    res.text(f"{tr('Total runs')}: {int(solved['Replicates']) * int(np.prod(counts))}")
+    return res
 
 
 def variance_power(n: int, ratio: float, alpha: float, alternative: str, two_sample: bool) -> float:
@@ -334,20 +476,27 @@ def power_two_variances(ws, n=0, ratio=0.0, power=0.9, alpha=0.05, alternative=N
 
 
 def equivalence_power(n: int, difference: float, lower: float, upper: float, sd: float, alpha: float,
-                      two_sample: bool) -> float:
-    """Approximate power of the two one-sided tests procedure (noncentral t)."""
-    df = 2 * n - 2 if two_sample else n - 1
+                      two_sample: bool, crossover: bool = False) -> float:
+    """Approximate power of the two one-sided tests procedure (noncentral t).
+
+    For a 2x2 crossover, n is the number of subjects in each sequence and sd the within-subject
+    standard deviation: the treatment difference then has standard error sd / sqrt(n) on 2n - 2 df.
+    """
+    df = 2 * n - 2 if two_sample or crossover else n - 1
     if df < 1:
         return 0.0
-    se = sd * np.sqrt(2 / n) if two_sample else sd / np.sqrt(n)
+    se = sd * np.sqrt(2 / n) if two_sample and not crossover else sd / np.sqrt(n)
     crit = sps.t.isf(alpha, df)
     value = sps.nct.cdf(-crit, df, (difference - upper) / se) - sps.nct.cdf(crit, df, (difference - lower) / se)
     return float(max(value, 0.0))
 
 
+EQUIVALENCE_DESIGNS = ["1-Sample or paired", "2-Sample", "2x2 crossover (within-subject standard deviation)"]
+_EQUIVALENCE_SIZE = dict(zip(EQUIVALENCE_DESIGNS, ["Sample size", "Sample size per group", "Subjects per sequence"]))
+
+
 @analysis("power.equivalence", menu=MENU, title="Power: Equivalence Test",
-          params=[Param("design", "Design", "choice", default="1-Sample or paired",
-                        choices=["1-Sample or paired", "2-Sample"]),
+          params=[Param("design", "Design", "choice", default="1-Sample or paired", choices=EQUIVALENCE_DESIGNS),
                   SIZE, Param("difference", "True difference", "number", default=0.0), POWER,
                   Param("lower", "Lower equivalence limit", "number", default=-1.0),
                   Param("upper", "Upper equivalence limit", "number", default=1.0), SD, ALPHA])
@@ -359,10 +508,10 @@ def power_equivalence(ws, design="1-Sample or paired", n=0, difference=0.0, powe
         raise ValueError("The true difference must lie inside the equivalence limits")
     if (n == 0) == (power == 0):
         raise ValueError("Leave exactly one of sample size and power at 0")
-    two = design == "2-Sample"
+    two, crossover = design == EQUIVALENCE_DESIGNS[1], design == EQUIVALENCE_DESIGNS[2]
 
-    def power_at(size):
-        return equivalence_power(size, difference, lower, upper, sd, alpha, two)
+    def power_at(size, diff=difference):
+        return equivalence_power(size, diff, lower, upper, sd, alpha, two, crossover)
 
     if n == 0:
         n, _, power = solve(lambda size, _d: power_at(size), 0, 1.0, power)
@@ -370,12 +519,12 @@ def power_equivalence(ws, design="1-Sample or paired", n=0, difference=0.0, powe
         power = power_at(n)
     res = Result("Power: Equivalence Test")
     res.text(f"α = {alpha:g}    σ = {sd:g}    {tr('Equivalence interval')}: ({lower:g}, {upper:g})    {tr(design)}")
-    res.table(pd.DataFrame([{"Difference": difference, "Sample size per group" if two else "Sample size": n,
-                             "Power": power}]), index=False, digits=5)
+    res.table(pd.DataFrame([{"Difference": difference, _EQUIVALENCE_SIZE[design]: n, "Power": power}]),
+              index=False, digits=5)
     fig = new_figure()
     ax = fig.add_subplot()
     grid = np.linspace(lower, upper, 160)
-    ax.plot(grid, [equivalence_power(n, d, lower, upper, sd, alpha, two) for d in grid], color=BLUE)
+    ax.plot(grid, [power_at(n, d) for d in grid], color=BLUE)
     ax.plot(difference, power, "o", color=RED)
     ax.set_ylim(0, 1.02), ax.set_xlabel(tr("Difference")), ax.set_ylabel(tr("Power"))
     ax.set_title(f"{tr('Power Curve')}: {tr('Power: Equivalence Test')} (n = {n})")

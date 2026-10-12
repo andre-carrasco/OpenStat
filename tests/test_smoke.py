@@ -22,6 +22,8 @@ OVERRIDES = {
     "basic.poisson1": {"column": "Count"},
     "basic.gof_poisson": {"column": "Count"},
     "tables.crosstab": {"rows": "Group", "cols": "Pass"},
+    "tables.mcnemar": {"first": "Pass", "second": "Seq"},
+    "tables.cmh": {"rows": "Pass", "cols": "Seq", "layers": "Group"},
     "nonpar.friedman": {"treatment": "Group", "block": "Block"},
     "equiv.crossover": {"sequence": "Seq"},
     "reg.logistic": {"response": "Pass"},

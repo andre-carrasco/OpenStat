@@ -21,8 +21,8 @@ Requer Python 3.11 ou mais novo. O idioma segue o sistema (pt-BR ou inglês) e p
 | Menu | Conteúdo |
 |---|---|
 | Dados | ordenar, subconjunto, mesclar e dividir planilhas, copiar colunas, excluir linhas, empilhar/desempilhar, transpor, concatenar, postos, padronizar, recodificar, alterar tipo, extrair partes de data/hora |
-| Calc | calculadora de fórmulas, fórmulas vinculadas a colunas, estatísticas de colunas e linhas, dados padronizados, em malha e aleatórios, variáveis indicadoras, matrizes, distribuições de probabilidade |
-| Estatística básica | descritiva, resumo gráfico, Z e t, t pareado, proporções, taxas de Poisson, variâncias, correlação, covariância, normalidade, outlier (Grubbs), ajuste de Poisson |
+| Calc | calculadora de fórmulas, fórmulas vinculadas a colunas, estatísticas de colunas e linhas, dados padronizados, em malha e aleatórios, variáveis indicadoras, matrizes, distribuições de probabilidade, reamostragem (bootstrap e testes de aleatorização) |
+| Estatística básica | descritiva, resumo gráfico, Z e t, t pareado, proporções, taxas de Poisson, variâncias, correlação, covariância, normalidade, outlier (Grubbs, Q de Dixon), ajuste de Poisson, armazenar estatísticas descritivas |
 | Regressão | linear com diagnósticos, linha ajustada, stepwise, melhores subconjuntos, não linear, logística binária/ordinal/nominal, Poisson, PLS, ortogonal |
 | ANOVA | um fator (Tukey, Fisher, Dunnett, Welch), modelo linear geral, igualdade de variâncias, aninhada, efeitos mistos, MANOVA, efeitos principais e interação |
 | DOE | fatorial completo e fracionado, Plackett-Burman, fatorial geral, composto central, Box-Behnken, misturas, Taguchi; análise, superfície de resposta e otimizador |
@@ -31,10 +31,10 @@ Requer Python 3.11 ou mais novo. O idioma segue o sistema (pt-BR ou inglês) e p
 | Confiabilidade | análise paramétrica com censura à direita e arbitrária, Kaplan-Meier, regressão com dados de vida, teste de vida acelerado, probit, curva de crescimento, plano de demonstração |
 | Multivariada | componentes principais, análise fatorial, itens, clusters, discriminante, correspondência |
 | Séries temporais | tendência, decomposição, média móvel, suavização exponencial, Winters, ACF, PACF, CCF, ARIMA |
-| Tabelas | contagem, tabulação cruzada, testes qui-quadrado |
-| Não paramétricos | sinais, Wilcoxon, Mann-Whitney, Kruskal-Wallis, Mood, Friedman, corridas |
+| Tabelas | contagem, tabulação cruzada com medidas ordinais e kappa, testes qui-quadrado, McNemar, Cochran-Mantel-Haenszel, tabela de estatísticas descritivas |
+| Não paramétricos | sinais, Wilcoxon, Mann-Whitney, Kruskal-Wallis, Mood, Friedman, corridas, médias, diferenças e inclinações pareadas |
 | Equivalência | 1 amostra, 2 amostras, pareado, crossover 2x2 |
-| Poder e tamanho de amostra | testes Z e t, proporções, variâncias, ANOVA, fatorial, equivalência, estimação, tolerância |
+| Poder e tamanho de amostra | testes Z e t, proporções, taxas de Poisson, variâncias, ANOVA, fatorial de 2 níveis, Plackett-Burman, fatorial completo geral, equivalência (inclusive crossover 2x2), estimação, tolerância |
 | Análise preditiva | CART, random forest e gradient boosting (classificação e regressão) |
 | Gráfico | 21 tipos, de histograma a superfície 3D |
 
@@ -48,7 +48,7 @@ como `aaaa-mm-dd` ou `dd/mm/aaaa` (`mm/dd/aaaa` em inglês), com hora opcional. 
 
 ### Ainda não incluído
 
-- Teste de Dixon, comparações de Hsu (MCB), experimentos definitive screening, análise de garantia
+- Razões de Dixon além de r10, comparações de Hsu (MCB), experimentos definitive screening, análise de garantia
   e Gage R&R expandido.
 - Leitura de arquivos de outros programas estatísticos.
 
