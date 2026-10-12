@@ -1,35 +1,59 @@
-"""Main window: navigator, output pane and worksheet tabs."""
+"""Main window: navigator, output pane, worksheet tabs and command line."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QDockWidget, QFileDialog, QListWidget, QMainWindow, QMenu, QMessageBox,
+from PySide6.QtCore import QSettings, Qt, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPdfWriter, QPixmap
+from PySide6.QtWidgets import (QDockWidget, QFileDialog, QInputDialog, QListWidget, QMainWindow, QMenu, QMessageBox,
                                QSplitter, QTabWidget)
 
 from openstat import __version__
 from openstat.core import io, registry
+from openstat.core.export import export_docx
 from openstat.core.project import OutputItem, Project
 from openstat.core.result import Result, wrap_document
 from openstat.core.worksheet import Worksheet
-from openstat.i18n import tr
+from openstat.i18n import language, tr
+from openstat.ui.console import Console
 from openstat.ui.dialog_builder import AnalysisDialog
 from openstat.ui.output_view import OutputView
 from openstat.ui.worksheet_view import WorksheetView
 
 PROJECT_FILTER = "OpenStat project (*.ostat)"
 MENU_ORDER = ["Data", "Calc", "Stat", "Graph"]
+LANGUAGES = {"pt_BR": "Português (Brasil)", "en": "English"}
+
+
+def app_icon() -> QIcon:
+    """Icon drawn in code: three bars and a control line."""
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#1f4e79"))
+    painter.drawRoundedRect(0, 0, 64, 64, 10, 10)
+    painter.setBrush(QColor("#ffffff"))
+    for x, height in ((12, 22), (27, 38), (42, 30)):
+        painter.drawRect(x, 54 - height, 10, height)
+    painter.setPen(QColor("#ffc000"))
+    painter.drawLine(8, 14, 56, 14)
+    painter.end()
+    return QIcon(pixmap)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.project = Project()
+        self.dirty = False
         self.resize(1200, 800)
+        self.setWindowIcon(app_icon())
 
         self.output = OutputView()
         self.tabs = QTabWidget()
+        self.tabs.tabBarDoubleClicked.connect(self.rename_worksheet)
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(self.output)
         splitter.addWidget(self.tabs)
@@ -42,13 +66,19 @@ class MainWindow(QMainWindow):
         dock.setWidget(self.navigator)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
 
+        self.console = Console(self)
+        self.console_dock = QDockWidget(tr("Command Line"), self)
+        self.console_dock.setWidget(self.console)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
+        self.console_dock.hide()
+
         self._build_menus()
         self.set_project(Project())
 
     # ----- menus -----
 
-    def _action(self, menu: QMenu, text: str, slot, shortcut=None) -> QAction:
-        action = menu.addAction(tr(text))
+    def _action(self, menu: QMenu, text: str, slot, shortcut=None, translate=True) -> QAction:
+        action = menu.addAction(tr(text) if translate else text)
         action.triggered.connect(lambda _checked=False: slot())
         if shortcut:
             action.setShortcut(shortcut)
@@ -65,7 +95,10 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self._action(file_menu, "Import Data...", self.import_data)
         self._action(file_menu, "Export Worksheet as CSV...", self.export_worksheet)
-        self._action(file_menu, "Export Output as HTML...", self.export_output)
+        export_menu = file_menu.addMenu(tr("Export Output"))
+        self._action(export_menu, "HTML...", lambda: self.export_output("html"), translate=False)
+        self._action(export_menu, "PDF...", lambda: self.export_output("pdf"), translate=False)
+        self._action(export_menu, "Word (.docx)...", lambda: self.export_output("docx"), translate=False)
         self._action(file_menu, "Clear Output", self.clear_output)
         file_menu.addSeparator()
         self._action(file_menu, "Exit", self.close)
@@ -81,7 +114,19 @@ class MainWindow(QMainWindow):
                 path = a.menu[:depth]
                 if path not in menus:
                     menus[path] = menus[path[:-1]].addMenu(tr(path[-1]))
-            self._action(menus[a.menu], a.title + "...", lambda a=a: self.run_analysis(a))
+            self._action(menus[a.menu], tr(a.title) + "...", lambda a=a: self.run_analysis(a), translate=False)
+
+        tools_menu = bar.addMenu(tr("Tools"))
+        toggle = self.console_dock.toggleViewAction()
+        toggle.setText(tr("Command Line"))
+        toggle.setShortcut("Ctrl+L")
+        tools_menu.addAction(toggle)
+        self._action(tools_menu, "Open Plugins Folder", self.open_plugins_folder)
+        language_menu = tools_menu.addMenu(tr("Language"))
+        for code_, name in LANGUAGES.items():
+            action = self._action(language_menu, name, lambda c=code_: self.set_language(c), translate=False)
+            action.setCheckable(True)
+            action.setChecked(code_ == language())
 
         help_menu = bar.addMenu(tr("Help"))
         self._action(help_menu, "About OpenStat", self.about)
@@ -94,22 +139,36 @@ class MainWindow(QMainWindow):
             project.new_worksheet()
         self.tabs.clear()
         for ws in project.worksheets:
-            self.tabs.addTab(WorksheetView(ws), ws.name)
+            self._add_tab(ws)
         self._refresh_output()
+        self.dirty = False
         self._update_title()
+
+    def _add_tab(self, ws: Worksheet) -> None:
+        view = WorksheetView(ws)
+        view.model_.modelReset.connect(self.mark_dirty)
+        self.tabs.addTab(view, ws.name)
+
+    def mark_dirty(self) -> None:
+        if not self.dirty:
+            self.dirty = True
+            self._update_title()
 
     def _update_title(self) -> None:
         name = self.project.path.name if self.project.path else tr("New Project")
-        self.setWindowTitle(f"{name} - OpenStat")
-
-    def _has_content(self) -> bool:
-        return bool(self.project.outputs) or any(ws.ncols for ws in self.project.worksheets)
+        self.setWindowTitle(f"{name}{' *' if self.dirty else ''} - OpenStat")
 
     def _confirm_discard(self) -> bool:
-        if not self._has_content():
+        if not self.dirty:
             return True
         answer = QMessageBox.question(self, "OpenStat", tr("Discard the current project?"))
         return answer == QMessageBox.Yes
+
+    def closeEvent(self, event):
+        if self._confirm_discard():
+            event.accept()
+        else:
+            event.ignore()
 
     def new_project(self) -> None:
         if self._confirm_discard():
@@ -121,8 +180,24 @@ class MainWindow(QMainWindow):
     def add_worksheet(self, ws: Worksheet, register: bool = True) -> None:
         if register:
             self.project.worksheets.append(ws)
-        self.tabs.addTab(WorksheetView(ws), ws.name)
+        self._add_tab(ws)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
+        self.mark_dirty()
+
+    def rename_worksheet(self, index: int) -> None:
+        if index < 0:
+            return
+        ws = self.tabs.widget(index).ws
+        name, ok = QInputDialog.getText(self, tr("Rename worksheet"), tr("Worksheet name:"), text=ws.name)
+        if ok and name.strip():
+            ws.name = name.strip()
+            self.tabs.setTabText(index, ws.name)
+            self.mark_dirty()
+
+    def worksheets_changed(self) -> None:
+        """Refresh every grid after data were changed outside the grid itself."""
+        for i in range(self.tabs.count()):
+            self.tabs.widget(i).refresh()
 
     def open_project(self) -> None:
         if not self._confirm_discard():
@@ -135,15 +210,19 @@ class MainWindow(QMainWindow):
         if self.project.path is None:
             self.save_project_as()
         else:
-            self._guarded(lambda: self.project.save(self.project.path))
+            self._save(self.project.path)
 
     def save_project_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, tr("Save Project As..."), "", tr(PROJECT_FILTER))
         if path:
-            if not path.lower().endswith(".ostat"):
-                path += ".ostat"
-            self._guarded(lambda: self.project.save(path))
-            self._update_title()
+            self._save(path if path.lower().endswith(".ostat") else path + ".ostat")
+
+    def _save(self, path) -> None:
+        def save():
+            self.project.save(path)
+            self.dirty = False
+        self._guarded(save)
+        self._update_title()
 
     def import_data(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, tr("Import Data..."), "", io.IMPORT_FILTER)
@@ -156,21 +235,44 @@ class MainWindow(QMainWindow):
         if path:
             self._guarded(lambda: io.export_csv(ws, path))
 
-    def export_output(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, tr("Export Output as HTML..."), "output.html", "HTML (*.html)")
-        if path:
-            body = "\n<hr>\n".join(o.html for o in self.project.outputs)
-            self._guarded(lambda: Path(path).write_text(wrap_document(body), encoding="utf-8"))
+    def output_html(self) -> str:
+        return wrap_document("\n<hr>\n".join(o.html for o in self.project.outputs))
+
+    def export_output(self, kind: str, path: str | None = None) -> None:
+        filters = {"html": "HTML (*.html)", "pdf": "PDF (*.pdf)", "docx": "Word (*.docx)"}
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(self, tr("Export Output"), f"output.{kind}", filters[kind])
+        if not path:
+            return
+        if kind == "html":
+            self._guarded(lambda: Path(path).write_text(self.output_html(), encoding="utf-8"))
+        elif kind == "docx":
+            self._guarded(lambda: export_docx(self.output_html(), path))
+        else:
+            self._guarded(lambda: self.output.document().print_(QPdfWriter(str(path))))
 
     def clear_output(self) -> None:
         self.project.outputs.clear()
         self._refresh_output()
+        self.mark_dirty()
 
     def _guarded(self, action) -> None:
         try:
             action()
         except Exception as exc:  # shown to the user instead of crashing the app
-            QMessageBox.critical(self, tr("Error"), f"{type(exc).__name__}: {exc}")
+            QMessageBox.critical(self, tr("Error"), tr(str(exc)) if isinstance(exc, ValueError)
+                                 else f"{type(exc).__name__}: {exc}")
+
+    # ----- tools -----
+
+    def open_plugins_folder(self) -> None:
+        folder = registry.plugins_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def set_language(self, code_: str) -> None:
+        QSettings("OpenStat", "OpenStat").setValue("language", code_)
+        QMessageBox.information(self, "OpenStat", tr("The language will change the next time OpenStat starts."))
 
     # ----- analyses -----
 
@@ -194,13 +296,13 @@ class MainWindow(QMainWindow):
         for name, values in result.stored.items():
             ws.add_column(name, values)
         if result.stored:
-            for i in range(self.tabs.count()):
-                self.tabs.widget(i).refresh()
+            self.worksheets_changed()
         for name, df in result.worksheets:
             self.add_worksheet(Worksheet(name, df))
         index = len(self.project.outputs)
         self.project.outputs.append(OutputItem(tr(result.title), result.to_html(anchor=f"r{index}")))
         self._refresh_output(scroll_to=index)
+        self.mark_dirty()
 
     def _refresh_output(self, scroll_to: int | None = None) -> None:
         self.navigator.blockSignals(True)
@@ -215,4 +317,5 @@ class MainWindow(QMainWindow):
 
     def about(self) -> None:
         QMessageBox.about(self, tr("About OpenStat"),
-                          f"OpenStat {__version__}\n\n{tr('Open-source statistical analysis application.')}\n\nMIT License")
+                          f"OpenStat {__version__}\n\n{tr('Open-source statistical analysis application.')}\n\n"
+                          f"{len(registry.all_analyses())} {tr('analyses available')}\n\nMIT License")

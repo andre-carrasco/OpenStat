@@ -1,7 +1,9 @@
 """Registry of analyses. Menus and dialogs are generated from these declarations."""
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 # Param kinds:
@@ -62,3 +64,24 @@ def load_builtin() -> None:
     """Import every module that registers analyses."""
     import openstat.graphs  # noqa: F401
     import openstat.stats  # noqa: F401
+
+
+def plugins_dir() -> Path:
+    return Path.home() / ".openstat" / "plugins"
+
+
+def load_plugins(directory: Path | None = None) -> list[str]:
+    """Import every .py file in the plugins folder; returns one message per plugin that failed."""
+    load_builtin()
+    directory = directory or plugins_dir()
+    errors = []
+    if not directory.is_dir():
+        return errors
+    for path in sorted(directory.glob("*.py")):
+        try:
+            spec = importlib.util.spec_from_file_location(f"openstat_plugin_{path.stem}", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as exc:  # a broken plugin must not stop the application
+            errors.append(f"{path.name}: {type(exc).__name__}: {exc}")
+    return errors

@@ -21,6 +21,7 @@ dependencies = [
     "pyDOE3",
     "openpyxl",
     "pyarrow",
+    "python-docx",
 ]
 
 [project.optional-dependencies]

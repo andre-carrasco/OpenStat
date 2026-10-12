@@ -17,6 +17,10 @@ def source_strings() -> set[str]:
     found = set()
     for path in ROOT.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call) and node.exc.args:
+                message = node.exc.args[0]   # error messages shown to the user
+                if isinstance(message, ast.Constant) and isinstance(message.value, str):
+                    found.add(message.value)
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

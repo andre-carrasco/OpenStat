@@ -37,14 +37,31 @@ def format_value(value) -> str:
     return str(value)
 
 
+def coerce_values(values: list) -> pd.Series:
+    """A float column when every present value is a number, otherwise a text column."""
+    present = [v for v in values if v is not None]
+    if all(isinstance(v, (int, float, np.number)) and not isinstance(v, bool) for v in present):
+        return pd.Series([np.nan if v is None else float(v) for v in values], dtype=float)
+    return pd.Series([None if v is None else format_value(v) for v in values], dtype=object)
+
+
+def normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Worksheet form: string column names, numeric columns as float, everything else as text or None."""
+    df = df.reset_index(drop=True).copy()
+    df.columns = [str(c) for c in df.columns]
+    for name in df.columns:
+        col = df[name]
+        if pd.api.types.is_bool_dtype(col) or pd.api.types.is_numeric_dtype(col):
+            df[name] = col.astype(float)
+        else:
+            df[name] = coerce_values([None if pd.isna(v) else v for v in col.tolist()]).to_numpy()
+    return df
+
+
 class Worksheet:
     def __init__(self, name: str = "Worksheet 1", df: pd.DataFrame | None = None):
         self.name = name
-        if df is None:
-            df = pd.DataFrame()
-        df = df.reset_index(drop=True).copy()
-        df.columns = [str(c) for c in df.columns]
-        self.df = df
+        self.df = normalize_frame(pd.DataFrame() if df is None else df)
 
     @property
     def nrows(self) -> int:
@@ -92,14 +109,7 @@ class Worksheet:
         values = [None if pd.isna(v) else parse_cell(v) if isinstance(v, str) else v
                   for v in self.df[name].tolist()]
         values[row] = value
-        self.df[name] = self._coerce(values)
-
-    @staticmethod
-    def _coerce(values: list) -> pd.Series:
-        present = [v for v in values if v is not None]
-        if all(isinstance(v, (int, float, np.number)) and not isinstance(v, bool) for v in present):
-            return pd.Series([np.nan if v is None else float(v) for v in values], dtype=float)
-        return pd.Series([None if v is None else format_value(v) for v in values], dtype=object)
+        self.df[name] = coerce_values(values)
 
     def rename_column(self, col: int, new_name: str) -> None:
         new_name = new_name.strip()
@@ -117,7 +127,7 @@ class Worksheet:
         if len(values) > self.nrows:
             self.df = self.df.reindex(range(len(values)))
         padded = values + [None] * (self.nrows - len(values))
-        self.df[name] = self._coerce([None if pd.isna(v) else v for v in padded]).values
+        self.df[name] = coerce_values([None if pd.isna(v) else v for v in padded]).values
         return name
 
     def data(self, columns: list[str], dropna: bool = True) -> pd.DataFrame:
