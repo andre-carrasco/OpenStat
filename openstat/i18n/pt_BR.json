@@ -1231,5 +1231,7 @@
   "Unsupported comparison": "Comparação não suportada",
   "Unsupported constant": "Constante não suportada",
   "Unsupported expression": "Expressão não suportada",
-  "Welch's test needs at least two observations and non-zero variance in each level": "O teste de Welch precisa de pelo menos duas observações e variância não nula em cada nível"
+  "Welch's test needs at least two observations and non-zero variance in each level": "O teste de Welch precisa de pelo menos duas observações e variância não nula em cada nível",
+  "ws: current worksheet   df: its data (pandas DataFrame)   np, pd": "ws: planilha atual   df: seus dados (DataFrame do pandas)   np, pd",
+  "run(id, **parameters): run an analysis      analyses(text=''): list analysis ids": "run(id, **parâmetros): roda uma análise      analyses(texto=''): lista os ids das análises"
 }

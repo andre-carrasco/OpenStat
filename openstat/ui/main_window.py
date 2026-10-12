@@ -22,6 +22,9 @@ from openstat.ui.worksheet_view import WorksheetView
 
 PROJECT_FILTER = "OpenStat project (*.ostat)"
 MENU_ORDER = ["Data", "Calc", "Stat", "Graph"]
+STAT_ORDER = ["Basic Statistics", "Regression", "ANOVA", "DOE", "Control Charts", "Quality Tools",
+              "Reliability/Survival", "Predictive Analytics", "Multivariate", "Time Series", "Tables",
+              "Nonparametrics", "Equivalence Tests", "Power and Sample Size"]
 LANGUAGES = {"pt_BR": "Português (Brasil)", "en": "English"}
 
 
@@ -104,7 +107,11 @@ class MainWindow(QMainWindow):
         self._action(file_menu, "Exit", self.close)
 
         menus: dict[tuple, QMenu] = {}
-        analyses = registry.all_analyses()
+        def submenu_rank(a):
+            name = a.menu[1] if len(a.menu) > 1 else ""
+            return STAT_ORDER.index(name) if name in STAT_ORDER else len(STAT_ORDER)
+
+        analyses = sorted(registry.all_analyses(), key=submenu_rank)   # stable: keeps registration order
         tops = MENU_ORDER + sorted({a.menu[0] for a in analyses} - set(MENU_ORDER))
         for top in tops:
             if any(a.menu[0] == top for a in analyses):

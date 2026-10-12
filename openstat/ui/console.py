@@ -15,8 +15,8 @@ from openstat.core import registry
 from openstat.core.worksheet import normalize_frame
 from openstat.i18n import tr
 
-BANNER = ("ws: current worksheet   df: its data (pandas DataFrame)   np, pd\n"
-          "run(id, **parameters): run an analysis      analyses(text=''): list analysis ids")
+BANNER = ["ws: current worksheet   df: its data (pandas DataFrame)   np, pd",
+          "run(id, **parameters): run an analysis      analyses(text=''): list analysis ids"]
 
 
 class HistoryLine(QLineEdit):
@@ -54,7 +54,7 @@ class Console(QWidget):
         font.setStyleHint(QFont.Monospace)
         self.log = QPlainTextEdit(readOnly=True)
         self.log.setFont(font)
-        self.log.setPlainText(BANNER)
+        self.log.setPlainText("\n".join(tr(line) for line in BANNER))
         self.line = HistoryLine()
         self.line.setFont(font)
         self.line.setPlaceholderText(tr("Python command, e.g.  df['C3'] = df['C1'] * 2"))
