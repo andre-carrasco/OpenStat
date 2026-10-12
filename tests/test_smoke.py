@@ -26,6 +26,12 @@ OVERRIDES = {
     "reg.nominal": {"categorical": []},
     "anova.nested": {"factor_a": "Group", "factor_b": "Batch"},
     "anova.interaction": {"factor1": "Group", "factor2": "Pass"},
+    "quality.capability_normal": {"lsl": "30", "usl": "60", "target": "45"},
+    "quality.capability_nonnormal": {"lsl": "30", "usl": "60"},
+    "quality.sixpack": {"lsl": "30", "usl": "60"},
+    "gage.crossed": {"part": "Part", "operator": "Operator", "tolerance": "20"},
+    "gage.nested": {"part": "Part", "operator": "Operator"},
+    "gage.attribute": {"rating": "Pass", "sample": "Part", "appraiser": "Operator"},
 }
 
 

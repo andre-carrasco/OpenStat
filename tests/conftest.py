@@ -25,6 +25,9 @@ def sample_ws() -> Worksheet:
         "Seq": np.array(["AB", "BA"], dtype=object)[np.arange(n) % 2],
         # two batches nested within each group, five observations per batch
         "Batch": np.array([f"{'ABCD'[i % 4]}{(i // 4) % 2}" for i in range(n)], dtype=object),
+        # balanced crossed gage layout: 5 parts x 2 operators x 4 replicates
+        "Part": np.array([f"p{i % 5}" for i in range(n)], dtype=object),
+        "Operator": np.array([f"o{(i // 5) % 2}" for i in range(n)], dtype=object),
     }))
 
 
