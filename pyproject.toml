@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openstat"
+version = "0.1.0"
+description = "Open-source statistical analysis desktop application"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.6",
+    "numpy",
+    "pandas",
+    "scipy",
+    "statsmodels",
+    "matplotlib",
+    "scikit-learn",
+    "lifelines",
+    "pyDOE3",
+    "openpyxl",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.gui-scripts]
+openstat = "openstat.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["openstat*"]
+
+[tool.setuptools.package-data]
+"openstat.i18n" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
