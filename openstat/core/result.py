@@ -108,11 +108,18 @@ def _table_html(df: pd.DataFrame, title, digits: int, index: bool) -> str:
     head += [f"<th>{html.escape(tr(str(c)))}</th>" for c in df.columns]
     out.append("<tr>" + "".join(head) + "</tr>")
     for label, row in zip(df.index, df.itertuples(index=False)):
-        cells = [f'<td class="l">{html.escape(str(label))}</td>'] if index else []
+        cells = [f'<td class="l">{html.escape(_row_label(label))}</td>'] if index else []
         cells += [f"<td>{format_number(v, digits)}</td>" for v in row]
         out.append("<tr>" + "".join(cells) + "</tr>")
     out.append("</table>")
     return "\n".join(out)
+
+
+def _row_label(label) -> str:
+    """Translate a row label, keeping the indentation used for nested rows."""
+    text = str(label)
+    stripped = text.strip()
+    return text.replace(stripped, tr(stripped)) if stripped else text
 
 
 def wrap_document(body: str, title: str = "OpenStat") -> str:

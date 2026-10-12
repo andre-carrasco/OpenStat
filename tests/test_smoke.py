@@ -39,6 +39,10 @@ OVERRIDES = {
     "quality.capability_binomial": {"column": "Count"},
     "doe.analyze_factorial": {"factors": ["Pass", "Seq", "Operator"]},
     "doe.analyze_mixture": {"components": ["M1", "M2", "M3"]},
+    "rel.arbitrary": {"start": "Start", "end": "End"},
+    "rel.probit": {"events": "Events", "trials": "Trials", "stress": "Dose"},
+    "mv.cluster_var": {"columns": ["Y", "X", "Z"]},
+    "mv.multiple_correspondence": {"columns": ["Group", "Pass"]},
 }
 
 

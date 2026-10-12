@@ -31,6 +31,10 @@ def sample_ws() -> Worksheet:
         "Operator": np.array([f"o{(i // 5) % 2}" for i in range(n)], dtype=object),
         # mixture components summing to 1
         "M1": mix[:, 0], "M2": mix[:, 1], "M3": mix[:, 2],
+        # interval-censored inspection times and dose-response counts
+        "Start": np.floor(x / 5) * 5, "End": np.floor(x / 5) * 5 + 5,
+        "Dose": 1.0 + np.arange(n) % 8, "Trials": np.full(n, 20.0),
+        "Events": np.minimum(20.0, np.round(2.5 * (np.arange(n) % 8) + (np.arange(n) % 3))),
     }))
 
 
