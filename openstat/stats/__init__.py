@@ -1,1 +1,1 @@
-from openstat.stats import basic, calc, data  # noqa: F401
+from openstat.stats import basic, calc, data, equivalence, nonparametric, tables  # noqa: F401

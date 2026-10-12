@@ -13,6 +13,13 @@ OVERRIDES = {
     "data.subset": {"condition": "Y > mean(Y)"},
     "data.recode": {"mapping": "A=1; B=2"},
     "calc.calculator": {"expression": "Y + 2 * X"},
+    "basic.p1": {"column": "Pass"},
+    "basic.p2": {"events1": 12, "trials1": 40, "events2": 20, "trials2": 45},
+    "basic.poisson1": {"column": "Count"},
+    "basic.gof_poisson": {"column": "Count"},
+    "tables.crosstab": {"rows": "Group", "cols": "Pass"},
+    "nonpar.friedman": {"treatment": "Group", "block": "Block"},
+    "equiv.crossover": {"sequence": "Seq"},
 }
 
 

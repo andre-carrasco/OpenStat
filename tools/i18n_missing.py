@@ -17,13 +17,16 @@ def source_strings() -> set[str]:
     found = set()
     for path in ROOT.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.Call) or not node.args:
+            if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            first = node.args[0]
+            first = node.args[0] if node.args else None
             if name in ("tr", "Result", "heading") and isinstance(first, ast.Constant) and isinstance(first.value, str):
                 found.add(first.value)
+            for kw in node.keywords:  # table titles
+                if kw.arg == "title" and name in ("table", "analysis") and isinstance(kw.value, ast.Constant):
+                    found.add(kw.value.value)
     return found
 
 
