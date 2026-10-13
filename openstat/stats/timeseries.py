@@ -464,6 +464,90 @@ def arima(ws, column, p=1, d=0, q=0, seasonal_p=0, seasonal_d=0, seasonal_q=0, s
     return res
 
 
+MAX_ORDER = Param("max_order", "Largest AR and MA order to try", "int", default=3, minimum=1, maximum=5)
+
+
+def arima_candidates(x, d=1, max_order=3, seasonal_d=0, season=0, constant=True) -> pd.DataFrame:
+    """Every ARIMA(p, d, q) up to `max_order`, with seasonal orders up to 1 when `season` is given,
+    ordered by the corrected Akaike criterion (AICc); models that cannot be fitted are left out."""
+    from statsmodels.tsa.arima.model import ARIMA
+
+    seasonal_orders = [(sp, sq) for sp in (0, 1) for sq in (0, 1)] if season else [(0, 0)]
+    differenced = d + seasonal_d > 0
+    trend = ("t" if d + seasonal_d == 1 else "n") if differenced and constant else ("c" if constant else "n")
+    rows = []
+    for p in range(max_order + 1):
+        for q in range(max_order + 1):
+            for sp, sq in seasonal_orders:
+                if p + q + sp + sq == 0 and trend == "n":
+                    continue
+                seasonal = (sp, seasonal_d, sq, season) if season and sp + sq + seasonal_d else (0, 0, 0, 0)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        fit = ARIMA(x, order=(p, d, q), seasonal_order=seasonal, trend=trend).fit()
+                except Exception:   # some orders cannot be estimated from a short series
+                    continue
+                if np.isfinite(fit.aicc):
+                    rows.append({"p": p, "d": d, "q": q, "P": sp, "D": seasonal_d if season else 0, "Q": sq,
+                                 "Log-likelihood": float(fit.llf), "AICc": float(fit.aicc), "AIC": float(fit.aic),
+                                 "BIC": float(fit.bic)})
+    if not rows:
+        raise ValueError("No ARIMA model could be fitted to the series")
+    return pd.DataFrame(rows).sort_values("AICc", kind="stable").reset_index(drop=True)
+
+
+@analysis("ts.best_arima", menu=MENU, title="Forecast with Best ARIMA Model",
+          params=[SERIES, Param("d", "Differencing order (d)", "int", default=1, minimum=0, maximum=2), MAX_ORDER,
+                  Param("seasonal", "Try seasonal terms", "bool", default=False),
+                  Param("seasonal_d", "Seasonal differencing order (D)", "int", default=0, minimum=0, maximum=1),
+                  SEASON, Param("constant", "Include constant term in model", "bool", default=True),
+                  Param("forecasts", "Number of forecasts", "int", default=6, minimum=0, maximum=10000), STORE])
+def best_arima(ws, column, d=1, max_order=3, seasonal=False, seasonal_d=0, season=12, constant=True, forecasts=6,
+               store=False):
+    x = series(ws, column, minimum=10)
+    if seasonal and len(x) < 2 * season + 5:
+        raise ValueError("The series is too short for seasonal terms of this length")
+    table = arima_candidates(x, d, max_order, seasonal_d if seasonal else 0, season if seasonal else 0, constant)
+    best = table.iloc[0]
+    res = Result("Forecast with Best ARIMA Model")
+    shown = table.head(10).drop(columns=[] if seasonal else ["P", "D", "Q"])
+    res.table(shown, title=f"{tr('Model selection')} (AICc, {len(table)} {tr('models')})", index=False, digits=3)
+    report = arima(ws, column, int(best["p"]), d, int(best["q"]), int(best["P"]), int(best["D"]), int(best["Q"]),
+                   season, constant, forecasts, store)
+    res.blocks += report.blocks
+    res.stored = report.stored
+    return res
+
+
+ADF_TERMS = ["Constant", "Constant and linear trend", "None"]
+
+
+@analysis("ts.adf", menu=MENU, title="Augmented Dickey-Fuller Test",
+          params=[SERIES, Param("lags", "Maximum lag order (0 = chosen by AIC)", "int", default=0, minimum=0,
+                                maximum=100),
+                  Param("terms", "Deterministic terms", "choice", default=ADF_TERMS[0], choices=ADF_TERMS)])
+def augmented_dickey_fuller(ws, column, lags=0, terms=ADF_TERMS[0]):
+    from statsmodels.tsa.stattools import adfuller
+
+    x = series(ws, column, minimum=10)
+    regression = dict(zip(ADF_TERMS, ["c", "ct", "n"]))[terms]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)   # the return type is changing between statsmodels versions
+        # the tuple is one value longer when the lag order is chosen automatically
+        statistic, p, used, n, critical = adfuller(x, maxlag=lags or None, regression=regression,
+                                                   autolag=None if lags else "AIC")[:5]
+    res = Result("Augmented Dickey-Fuller Test")
+    res.text(f"{tr('H0: the series has a unit root (it is not stationary)')}    {tr('Deterministic terms')}: "
+             f"{tr(terms)}")
+    res.table(pd.DataFrame([{"Test statistic": float(statistic), "P-Value": float(p), "Lags used": int(used),
+                             "N": int(n), **{f"{tr('Critical value')} {k}": v for k, v in critical.items()}}]),
+              index=False)
+    res.text(tr("The data give evidence that the series is stationary.") if p < 0.05
+             else tr("A unit root cannot be ruled out; consider differencing the series."))
+    return res
+
+
 def _arima_name(name: str) -> str:
     kind, _, lag = name.partition(".L")
     labels = {"ar": "AR", "ma": "MA", "ar.S": "SAR", "ma.S": "SMA"}

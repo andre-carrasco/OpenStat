@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from scipy import optimize
 from scipy import stats as sps
 
 from openstat.core.registry import Param, analysis
@@ -511,3 +512,270 @@ def demonstration_plan(ws, reliability=90.0, mission_time=1000.0, test_time=1000
     res.text(f"{tr('If no more than')} {failures} {tr('units fail, the reliability at time')} {mission_time:g} "
              f"{tr('is at least')} {reliability:g}% ({confidence:g}% {tr('confidence')}).")
     return res
+
+
+def planning_parameters(distribution: str, first: float, second: float) -> tuple[float, float]:
+    """Location and scale of the model for planning values given as in the parameter tables:
+    shape and scale (Weibull), mean (exponential), location and scale (the other families)."""
+    if distribution == "Weibull":
+        return float(np.log(second)), 1 / first
+    if distribution == "Exponential":
+        return float(np.log(first)), 1.0
+    return first, second
+
+
+def estimation_plan(distribution: str, mu: float, sigma: float, percent: float, precision: float,
+                    censor_time: float | None = None, confidence=95.0) -> dict:
+    """Units to test so that the lower confidence bound of a percentile is within `precision` of
+    its estimate, by the large-sample variance of maximum likelihood with censoring at `censor_time`."""
+    base, log_time, fixed = _life.FAMILIES[distribution]
+    z_p = float(base.ppf(percent / 100))
+    censor_z = np.inf
+    if censor_time:
+        censor_z = ((np.log(censor_time) if log_time else censor_time) - mu) / sigma
+    info = _life.censored_information(distribution, censor_z)
+    if fixed:
+        factor = 1 / info[0, 0]
+    else:
+        direction = np.array([1.0, z_p])
+        factor = float(direction @ np.linalg.inv(info) @ direction)
+    estimate = mu + z_p * sigma
+    z = sps.norm.ppf(0.5 + confidence / 200)
+    if log_time:
+        estimate = float(np.exp(estimate))
+        if not 0 < precision < estimate:
+            raise ValueError("The precision must be positive and less than the percentile itself")
+        se = -np.log(1 - precision / estimate) / z   # on the log scale, where the interval is symmetric
+    else:
+        if precision <= 0:
+            raise ValueError("The precision must be positive")
+        se = precision / z
+    return {"n": max(2, int(np.ceil(factor * sigma ** 2 / se ** 2))), "percentile": estimate, "factor": factor,
+            "failing": float(base.cdf(censor_z)) if np.isfinite(censor_z) else 1.0}
+
+
+@analysis("rel.estimation_plan", menu=MENU, title="Estimation Test Plan",
+          params=[DISTRIBUTION,
+                  Param("first", "Planning value: shape (Weibull), mean (exponential) or location", "number", default=2.0),
+                  Param("second", "Planning value: scale", "number", default=100.0, minimum=1e-12),
+                  Param("percent", "Percentile to estimate (%)", "number", default=10.0, minimum=0.01, maximum=99.99),
+                  Param("precision", "Distance from the lower bound to the estimate", "number", default=10.0,
+                        minimum=1e-12),
+                  Param("censor_time", "Test ends at time (0 = until every unit fails)", "number", default=0.0,
+                        minimum=0.0), CONFIDENCE])
+def estimation_test_plan(ws, distribution="Weibull", first=2.0, second=100.0, percent=10.0, precision=10.0,
+                         censor_time=0.0, confidence=95.0):
+    if distribution in ("Weibull", "Exponential") and first <= 0:
+        raise ValueError("The planning values must be positive")
+    mu, sigma = planning_parameters(distribution, first, second)
+    out = estimation_plan(distribution, mu, sigma, percent, precision, censor_time or None, confidence)
+    res = Result("Estimation Test Plan")
+    res.text(f"{tr('Distribution')}: {tr(distribution)}    {confidence:g}% {tr('two-sided confidence interval')}")
+    res.table(pd.DataFrame([{"Percent": percent, "Planning percentile": out["percentile"], "Precision": precision,
+                             "Sample size": out["n"], "Expected failures (%)": 100 * out["failing"]}]),
+              title="Test Plan", index=False)
+    if out["failing"] < 1:
+        res.text(f"{tr('Right censoring at time')} {censor_time:g}")
+    return res
+
+
+# ----- multiple failure modes -----
+
+MAX_MODES = 10
+
+
+@analysis("rel.failure_modes", menu=MENU, title="Parametric Distribution Analysis (Multiple Failure Modes)",
+          params=[TIME, Param("mode", "Failure mode (blank = censored)", "column", numeric=False), DISTRIBUTION,
+                  CONFIDENCE])
+def failure_modes(ws, time, mode, distribution="Weibull", confidence=95.0):
+    frame = ws.df[[time, mode]].dropna(subset=[time])
+    t = frame[time].to_numpy(dtype=float)
+    labels = frame[mode].map(lambda v: None if pd.isna(v) else format_value(v)).to_numpy()
+    modes = sorted({m for m in labels if m is not None})
+    if not 1 <= len(modes) <= MAX_MODES:
+        raise ValueError(f"Between 1 and {MAX_MODES} failure modes are needed")
+    res = Result("Parametric Distribution Analysis (Multiple Failure Modes)")
+    res.text(f"{tr('Distribution')}: {tr(distribution)}    N = {len(t)}    "
+             f"{tr('Censored')}: {int(sum(m is None for m in labels))}    "
+             f"{tr('For each mode, the failures of the other modes count as censored.')}")
+    fits = {}
+    for name in modes:
+        failed = labels == name
+        fits[name] = _life.fit_life(*_life.right_censored(t, failed), name=distribution)
+        table = parameter_table(fits[name], confidence)
+        res.table(table, title=f"{tr('Failure mode')}: {name} ({int(failed.sum())} {tr('Failures')})")
+
+    def survival(at):   # the unit survives when it escapes every mode
+        return np.prod([fit.survival(at) for fit in fits.values()], axis=0)
+
+    grid_top = t.max() * 1.1
+    rows = {}
+    for p in PERCENTS:
+        high = max(t.max(), 1.0)
+        while survival(high) > 1 - p / 100 and high < 1e12 * max(t.max(), 1.0):
+            high *= 2
+        low = 1e-12 if fits[modes[0]].log_time else min(t.min(), 0.0) - 10 * abs(t).max()
+        rows[p] = {"Percentile": float(optimize.brentq(lambda at: survival(at) - (1 - p / 100), low, high))
+                   if survival(high) <= 1 - p / 100 else np.nan}
+    table = pd.DataFrame.from_dict(rows, orient="index")
+    table.index.name = "Percent"
+    res.table(table, title="Table of Percentiles (all modes together)")
+    grid = np.linspace(max(t.min() * 0.5, 1e-9) if fits[modes[0]].log_time else t.min(), grid_top, 300)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    for i, (name, fit) in enumerate(fits.items()):
+        ax.plot(grid, 100 * fit.survival(grid), color=PALETTE[i % len(PALETTE)], linewidth=1, label=name)
+    ax.plot(grid, 100 * survival(grid), color="black", linewidth=2, label=tr("All modes"))
+    ax.set_xlabel(time), ax.set_ylabel(tr("Percent")), ax.set_title(tr("Survival Plot")), ax.legend(fontsize=8)
+    return res.figure(fig)
+
+
+# ----- nonparametric growth curve -----
+
+def mean_cumulative_function(time, system, retired=None) -> pd.DataFrame:
+    """Nelson's estimate of the mean number of failures per system by each failure time.
+
+    A system counts as observed up to its retirement time, or up to the largest time in the data
+    when no retirement is given. The standard error treats the failures as a Poisson process.
+    """
+    time, system = np.asarray(time, dtype=float), np.asarray(system)
+    retired = np.zeros(len(time), dtype=bool) if retired is None else np.asarray(retired, dtype=bool)
+    end = {name: time.max() for name in dict.fromkeys(system)}
+    for name in set(system[retired]):
+        end[name] = time[retired & (system == name)].max()
+    ends = np.array(list(end.values()))
+    rows, total, variance = [], 0.0, 0.0
+    for t in np.unique(time[~retired]):
+        at_risk = int((ends >= t).sum())
+        failures = int(((time == t) & ~retired).sum())
+        if not at_risk:
+            continue
+        total += failures / at_risk
+        variance += failures / at_risk ** 2
+        rows.append({"Time": t, "Systems at risk": at_risk, "Failures": failures, "Mean cumulative function": total,
+                     "Standard error": np.sqrt(variance)})
+    if not rows:
+        raise ValueError("At least one failure (uncensored observation) is needed")
+    return pd.DataFrame(rows)
+
+
+@analysis("rel.mcf", menu=MENU, title="Nonparametric Growth Curve (Mean Cumulative Function)",
+          params=[Param("time", "Failure or retirement times", "column"),
+                  Param("system", "System ID", "column", numeric=False),
+                  Param("retire", "Retirement column", "column", numeric=False, optional=True),
+                  Param("retire_value", "Value that marks a retirement", "text", default="0"), CONFIDENCE])
+def nonparametric_growth(ws, time, system, retire=None, retire_value="0", confidence=95.0):
+    cols = [time, system] + ([retire] if retire and retire != system else [])
+    frame = ws.df[cols].dropna()
+    retired = None
+    if len(cols) == 3:
+        retired = (frame[retire].map(format_value) == format_value(_number_or_text(retire_value))).to_numpy()
+    table = mean_cumulative_function(frame[time], frame[system].map(format_value), retired)
+    z = sps.norm.ppf(0.5 + confidence / 200)
+    table["CI Lower"] = np.maximum(table["Mean cumulative function"] - z * table["Standard error"], 0.0)
+    table["CI Upper"] = table["Mean cumulative function"] + z * table["Standard error"]
+    res = Result("Nonparametric Growth Curve (Mean Cumulative Function)")
+    res.text(f"{tr('Systems')}: {frame[system].nunique()}    {tr('Failures')}: {int(table['Failures'].sum())}")
+    res.table(table.head(200), index=False)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    steps = np.concatenate([[0.0], table["Time"]])
+    ax.step(steps, np.concatenate([[0.0], table["Mean cumulative function"]]), where="post", color=BLUE)
+    for column in ("CI Lower", "CI Upper"):
+        ax.step(steps, np.concatenate([[0.0], table[column]]), where="post", color=RED, linestyle="--", linewidth=0.8)
+    ax.set_xlabel(time), ax.set_ylabel(tr("Mean cumulative function"))
+    ax.set_title(tr("Mean Cumulative Function"))
+    return res.figure(fig)
+
+
+# ----- warranty -----
+
+WARRANTY_MENU = MENU + ("Warranty Analysis",)
+
+
+def warranty_intervals(shipments, returns: np.ndarray) -> pd.DataFrame:
+    """Ages at failure from a table of returns by shipment period (rows) and return period (columns).
+
+    Units shipped in period i and returned in period j failed between ages j - i and j - i + 1;
+    those never returned are still working at age (number of periods) - i + 1. Cells before the
+    shipment period are ignored.
+    """
+    shipments, returns = np.asarray(shipments, dtype=float), np.nan_to_num(np.asarray(returns, dtype=float))
+    periods = returns.shape[1]
+    rows = []
+    for i in range(min(len(shipments), periods)):
+        back = returns[i, i:]
+        if (back < 0).any() or shipments[i] < back.sum():
+            raise ValueError(f"Shipment period {i + 1}: the returns must be non-negative and no more than the shipments")
+        rows += [(j, j + 1, count) for j, count in enumerate(back) if count > 0]
+        if shipments[i] > back.sum():
+            rows.append((periods - i, np.nan, shipments[i] - back.sum()))
+    if not rows:
+        raise ValueError("The worksheet has no data.")
+    return pd.DataFrame(rows, columns=["Start time", "End time", "Frequencies"], dtype=float)
+
+
+@analysis("rel.warranty_preprocess", menu=WARRANTY_MENU, title="Pre-Process Warranty Data",
+          params=[Param("shipments", "Shipments in each period", "column"),
+                  Param("returns", "Returns (one column per period, in order)", "columns")])
+def warranty_preprocess(ws, shipments, returns):
+    returns = [c for c in returns if c != shipments]
+    if not returns:
+        raise ValueError("Select at least one column of returns")
+    rows = np.flatnonzero(ws.df[shipments].notna().to_numpy())
+    frame = warranty_intervals(ws.df[shipments].iloc[rows], ws.df[returns].iloc[rows].to_numpy(dtype=float))
+    failed = frame["End time"].notna()
+    res = Result("Pre-Process Warranty Data")
+    res.table(pd.DataFrame([{"Units shipped": float(frame["Frequencies"].sum()),
+                             "Failures": float(frame["Frequencies"][failed].sum()),
+                             "Still in service": float(frame["Frequencies"][~failed].sum())}]), index=False, digits=0)
+    res.text(tr("Use the new worksheet in Warranty Prediction or in Parametric Distribution Analysis "
+                "(Arbitrary Censoring)."))
+    res.worksheet(tr("Warranty data"), frame)
+    return res
+
+
+def warranty_forecast(fit: _life.LifeFit, ages, counts, periods: int) -> np.ndarray:
+    """Expected cumulative failures in each of the next periods among units now working at `ages`."""
+    ages, counts = np.asarray(ages, dtype=float), np.asarray(counts, dtype=float)
+    now = fit.survival(ages)
+    return np.array([float((counts * (now - fit.survival(ages + m)) / now).sum()) for m in range(1, periods + 1)])
+
+
+@analysis("rel.warranty_prediction", menu=WARRANTY_MENU, title="Warranty Prediction",
+          params=[Param("start", "Start times", "column"),
+                  Param("end", "End times (blank = still in service)", "column"),
+                  Param("frequency", "Frequencies", "column", optional=True), DISTRIBUTION,
+                  Param("periods", "Number of future periods", "int", default=3, minimum=1, maximum=1000),
+                  CONFIDENCE])
+def warranty_prediction(ws, start, end, frequency=None, distribution="Weibull", periods=3, confidence=95.0):
+    cols = [start, end] + ([frequency] if frequency else [])
+    frame = ws.df[cols].dropna(subset=[start])
+    counts = frame[frequency].fillna(0.0).to_numpy(dtype=float) if frequency else np.ones(len(frame))
+    frame, counts = frame[counts > 0], counts[counts > 0]
+    lower, upper = frame[start].to_numpy(dtype=float), frame[end].fillna(np.inf).to_numpy(dtype=float)
+    if (upper < lower).any():
+        raise ValueError("An end time is earlier than its start time")
+    fit = _life.fit_life(lower, upper, name=distribution, weights=counts)
+    working = np.isinf(upper)
+    expected = warranty_forecast(fit, lower[working], counts[working], periods)
+    alpha = 1 - confidence / 100
+    res = Result("Warranty Prediction")
+    res.text(f"{tr('Distribution')}: {tr(distribution)}")
+    res.table(pd.DataFrame([{"Units": float(counts.sum()), "Failures": float(counts[~working].sum()),
+                             "Still in service": float(counts[working].sum())}]), title="Summary of the data",
+              index=False, digits=0)
+    res.table(parameter_table(fit, confidence), title="Parameter Estimates")
+    table = pd.DataFrame({"Predicted failures": expected,
+                          "Lower": sps.chi2.ppf(alpha / 2, 2 * expected) / 2,
+                          "Upper": sps.chi2.ppf(1 - alpha / 2, 2 * expected + 2) / 2},
+                         index=pd.Index(np.arange(1, periods + 1), name="Future period"))
+    res.table(table, title=f"{tr('Cumulative failures of the units now in service')} "
+                           f"({confidence:g}% {tr('Poisson interval')})", digits=2)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    ax.plot(table.index, table["Predicted failures"], "-o", color=BLUE)
+    ax.fill_between(table.index, table["Lower"], table["Upper"], color=BLUE, alpha=0.2)
+    ax.set_xlabel(tr("Future period")), ax.set_ylabel(tr("Predicted failures"))
+    ax.set_title(tr("Warranty Prediction"))
+    return res.figure(fig)

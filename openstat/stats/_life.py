@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy import optimize
+from scipy import integrate, optimize
 from scipy.special import gamma
 from scipy import stats as sps
 from statsmodels.tools.numdiff import approx_hess
@@ -88,12 +88,13 @@ class LifeFit:
         return mu
 
 
-def fit_life(lower, upper, X=None, name="Weibull", columns=None) -> LifeFit:
+def fit_life(lower, upper, X=None, name="Weibull", columns=None, weights=None) -> LifeFit:
     """Maximum likelihood with exact (lower == upper), right (upper = inf), left (lower = -inf or 0)
-    and interval censored observations."""
+    and interval censored observations; `weights` counts how many units each row stands for."""
     base, log_time, fixed = FAMILIES[name]
     lower, upper = np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)
     n = len(lower)
+    w = np.ones(n) if weights is None else np.asarray(weights, dtype=float)
     X = np.ones((n, 1)) if X is None else np.asarray(X, dtype=float)
     if log_time:
         if (upper <= 0).any() or (lower < 0).any():
@@ -107,22 +108,23 @@ def fit_life(lower, upper, X=None, name="Weibull", columns=None) -> LifeFit:
         raise ValueError("Not enough observations to fit the model")
     mid = np.where(np.isfinite(lower) & np.isfinite(upper), (lower + upper) / 2,
                    np.where(np.isfinite(lower), lower, upper))
-    beta0, *_ = np.linalg.lstsq(X, mid, rcond=None)
-    sigma0 = max(float(np.std(mid - X @ beta0)), 1e-3)
+    root = np.sqrt(w)
+    beta0, *_ = np.linalg.lstsq(X * root[:, None], mid * root, rcond=None)
+    sigma0 = max(float(np.sqrt(np.average((mid - X @ beta0) ** 2, weights=w))), 1e-3)
     k = X.shape[1]
 
     def negative_loglik(theta):
         beta = theta[:k]
         sigma = 1.0 if fixed else np.exp(theta[k])
         mu = X @ beta
-        total = np.sum(base.logpdf((lower[exact] - mu[exact]) / sigma) - np.log(sigma))
+        total = np.sum(w[exact] * (base.logpdf((lower[exact] - mu[exact]) / sigma) - np.log(sigma)))
         rest = ~exact
         if rest.any():
             hi = base.cdf((upper[rest] - mu[rest]) / sigma)
             lo = base.cdf((lower[rest] - mu[rest]) / sigma)
             right = np.isinf(upper[rest])
             prob = np.where(right, base.sf((lower[rest] - mu[rest]) / sigma), hi - lo)
-            total += np.sum(np.log(np.clip(prob, 1e-300, None)))
+            total += np.sum(w[rest] * np.log(np.clip(prob, 1e-300, None)))
         return -total if np.isfinite(total) else 1e300
 
     start = np.concatenate([beta0, [] if fixed else [np.log(sigma0)]])
@@ -138,8 +140,36 @@ def fit_life(lower, upper, X=None, name="Weibull", columns=None) -> LifeFit:
     loglik = -float(negative_loglik(theta))
     if log_time:
         # density of time rather than of log(time), so that all families are comparable
-        loglik -= float(lower[exact].sum())
-    return LifeFit(name, theta[:k], sigma, cov, loglik, n, int(exact.sum()), list(columns or ["Intercept"]))
+        loglik -= float((w[exact] * lower[exact]).sum())
+    return LifeFit(name, theta[:k], sigma, cov, loglik, int(round(w.sum())), int(round(w[exact].sum())),
+                   list(columns or ["Intercept"]))
+
+
+def censored_information(name: str, censor_z: float = np.inf) -> np.ndarray:
+    """Fisher information about (location, scale) in one observation of a family, in units of
+    1 / scale^2, when the standardized observation is right-censored at `censor_z`.
+
+    An exact observation z contributes the outer product of its score (-psi, -(1 + z psi)), with
+    psi the derivative of the log density; a censored one contributes that of h (1, censor_z),
+    with h the hazard at the censoring point.
+    """
+    base = FAMILIES[name][0]
+
+    def score(z):
+        psi = (base.logpdf(z + 1e-5) - base.logpdf(z - 1e-5)) / 2e-5
+        return np.array([-psi, -(1 + z * psi)])
+
+    low, high = base.ppf(1e-12), min(censor_z, base.ppf(1 - 1e-12))
+    info = np.zeros((2, 2))
+    for i in range(2):
+        for j in range(i, 2):
+            info[i, j] = info[j, i] = integrate.quad(lambda z: score(z)[i] * score(z)[j] * base.pdf(z), low, high,
+                                                     limit=200)[0]
+    if np.isfinite(censor_z):
+        hazard = base.pdf(censor_z) / base.sf(censor_z)
+        censored = hazard * np.array([1.0, censor_z])
+        info += base.sf(censor_z) * np.outer(censored, censored)
+    return info
 
 
 def right_censored(time, failed) -> tuple[np.ndarray, np.ndarray]:

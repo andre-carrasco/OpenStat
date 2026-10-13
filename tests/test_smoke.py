@@ -60,6 +60,8 @@ OVERRIDES = {
     "doe.overlaid_contour": {"x": "Z", "y": "Count", "lower": "0, 0", "upper": "100, 100"},
     "doe.predict_taguchi": {"levels": "Group=A"},
     "rel.arbitrary": {"start": "Start", "end": "End"},
+    "rel.warranty_prediction": {"start": "Start", "end": "End"},
+    "rel.warranty_preprocess": {"shipments": "Trials", "returns": ["Count", "M1"]},
     "rel.probit": {"events": "Events", "trials": "Trials", "stress": "Dose"},
     "mv.cluster_var": {"columns": ["Y", "X", "Z"]},
     "mv.multiple_correspondence": {"columns": ["Group", "Pass"]},
