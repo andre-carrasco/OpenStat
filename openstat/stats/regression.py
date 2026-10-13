@@ -12,15 +12,17 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from openstat.core.registry import Param, analysis
 from openstat.core.result import Result
-from openstat.core.worksheet import format_value
+from openstat.core.worksheet import Worksheet, format_value, parse_cell
 from openstat.graphs import new_figure
 from openstat.i18n import tr
 from openstat.stats._design import CONSTANT, Design, build_design, complete_rows
 from openstat.stats._tests import CONFIDENCE
 from openstat.stats._util import median_ranks
+from openstat.stats.quality import LSL, USL, optional_number
 
 MENU = ("Stat", "Regression")
 BLUE, RED, GRAY = "#5b9bd5", "#c00000", "#7f7f7f"
+PALETTE = ["#5b9bd5", "#ed7d31", "#70ad47", "#ffc000", "#7030a0", "#c00000", "#00b0f0", "#7f7f7f"]
 
 RESPONSE = Param("response", "Response", "column")
 CONTINUOUS = Param("continuous", "Continuous predictors", "columns", optional=True)
@@ -154,6 +156,228 @@ def fit_regression(ws, response, continuous=None, categorical=None, interactions
     res = Result("Fit Regression Model")
     linear_report(res, ws, response, design, store, plots)
     return res
+
+
+# ----- prediction -----
+
+def parse_points(text: str, names: list[str]) -> list[dict]:
+    """'X=50, Group=A; X=55, Group=B' -> one {predictor: value} per point."""
+    points = []
+    for part in str(text).split(";"):
+        if not part.strip():
+            continue
+        point = {}
+        for item in part.split(","):
+            if "=" not in item:
+                raise ValueError(f"Invalid predictor value: {item.strip()}")
+            name, value = (s.strip() for s in item.split("=", 1))
+            if name not in names:
+                raise ValueError(f"Unknown predictor: {name}")
+            point[name] = value
+        missing = [n for n in names if n not in point]
+        if missing:
+            raise ValueError(f"No value given for: {', '.join(missing)}")
+        points.append(point)
+    if not points:
+        raise ValueError("Enter the values of the predictors")
+    return points
+
+
+def design_rows(ws, design: Design, response, continuous, categorical, interactions, points: list[dict],
+                coding="reference") -> pd.DataFrame:
+    """Rows of the model matrix for new settings of the predictors (`points`: {predictor: value})."""
+    continuous, categorical = list(continuous or []), list(categorical or [])
+    new = {response: [0.0] * len(points)}   # a placeholder: only the predictors of these rows are used
+    for name in continuous:
+        try:
+            new[name] = [float(str(p[name]).replace(",", ".")) for p in points]
+        except ValueError:
+            raise ValueError(f"{name}: the value must be a number") from None
+    for name in categorical:
+        values = [parse_cell(p[name]) if ws.is_numeric(name) and isinstance(p[name], str) else p[name]
+                  for p in points]
+        unknown = [format_value(v) for v in values if format_value(v) not in design.levels[name]]
+        if unknown:
+            raise ValueError(f"{name}: unknown level {unknown[0]}")
+        new[name] = values
+    used = [response] + continuous + categorical
+    extended = Worksheet("points", pd.concat([ws.df[used].iloc[design.rows], pd.DataFrame(new)], ignore_index=True))
+    return build_design(extended, [response], continuous, categorical, interactions, coding).X.iloc[-len(points):]
+
+
+@analysis("reg.predict", menu=MENU, title="Predict",
+          params=[RESPONSE, CONTINUOUS, CATEGORICAL, INTERACTIONS,
+                  Param("values", "Predictor values (e.g. X=50, Group=A; X=55, Group=B)", "text"), CONFIDENCE])
+def predict(ws, response, continuous=None, categorical=None, interactions=False, values="", confidence=95.0):
+    design = build_design(ws, [response], continuous, categorical, interactions)
+    names = list(continuous or []) + list(categorical or [])
+    points = parse_points(values, names)
+    _, fit = fit_ols(ws, response, design)
+    rows = design_rows(ws, design, response, continuous, categorical, interactions, points)
+    frame = fit.get_prediction(rows.to_numpy()).summary_frame(alpha=1 - confidence / 100)
+    table = pd.DataFrame({"Fit": frame["mean"], "SE Fit": frame["mean_se"], "CI Lower": frame["mean_ci_lower"],
+                          "CI Upper": frame["mean_ci_upper"], "PI Lower": frame["obs_ci_lower"],
+                          "PI Upper": frame["obs_ci_upper"]})
+    table.index = pd.Index([", ".join(f"{n} = {p[n]}" for n in names) for p in points], name="Settings")
+    res = Result("Predict")
+    res.heading("Regression Equation").text(equation(response, fit.params))
+    res.table(table, title=f"{tr('Prediction')} ({confidence:g}% {tr('CI')}, {tr('PI')})")
+    used = ws.df.iloc[design.rows]
+    outside = sorted({n for n in (continuous or []) for x in rows[n]
+                      if not used[n].min() <= x <= used[n].max()})
+    if outside:
+        res.text(f"{tr('Values outside the range of the data (extrapolation)')}: {', '.join(outside)}")
+    return res
+
+
+@analysis("reg.binary_fitted_line", menu=MENU, title="Binary Fitted Line Plot",
+          params=[Param("response", "Response (two values)", "column", numeric=False),
+                  Param("predictor", "Predictor", "column"), CONFIDENCE])
+def binary_fitted_line(ws, response, predictor, confidence=95.0):
+    design = build_design(ws, [response], [predictor])
+    labels = ws.df[response].iloc[design.rows].map(format_value)
+    levels = sorted(labels.unique())
+    if len(levels) != 2:
+        raise ValueError("The response must have exactly two distinct values")
+    y = (labels == levels[-1]).astype(float).to_numpy()
+    x = design.X[predictor].to_numpy()
+    fit = sm.GLM(y, design.X, family=sm.families.Binomial()).fit()
+    grid = np.linspace(x.min(), x.max(), 200)
+    matrix = np.column_stack([np.ones(len(grid)), grid])
+    eta = matrix @ fit.params.to_numpy()
+    half = sps.norm.ppf(0.5 + confidence / 200) * np.sqrt(np.einsum("ij,jk,ik->i", matrix, fit.cov_params().to_numpy(),
+                                                                      matrix))
+    fig = new_figure()
+    ax = fig.add_subplot()
+    ax.plot(x, y, "o", color=BLUE, markersize=5, alpha=0.6)
+    ax.plot(grid, sps.logistic.cdf(eta), color=RED, label=tr("Event probability"))
+    ax.plot(grid, sps.logistic.cdf(eta - half), color=RED, linestyle="--", label=f"{confidence:g}% {tr('CI')}")
+    ax.plot(grid, sps.logistic.cdf(eta + half), color=RED, linestyle="--")
+    ax.set_ylim(-0.05, 1.05), ax.set_xlabel(predictor), ax.set_ylabel(f"P({response} = {levels[-1]})")
+    ax.set_title(tr("Binary Fitted Line Plot")), ax.legend()
+    res = Result("Binary Fitted Line Plot")
+    res.text(f"{tr('Event')}: {response} = {levels[-1]}    {tr('Events')}: {int(y.sum())}    N = {len(y)}")
+    glm_report(res, fit, "Odds Ratio", confidence)
+    return res.figure(fig)
+
+
+# ----- stability study -----
+
+SHELF_LIFE_SEARCH = 10   # the shelf life is looked for up to this many times the longest time in the data
+
+
+def shelf_life(mean_at, half_at, lower, upper, horizon: float) -> float:
+    """First time at which the confidence bound of the mean response leaves the specification.
+
+    `mean_at(t)` is the fitted mean and `half_at(t)` the half-width of its bound. Returns 0 when
+    the response is out of specification from the start and inf when it stays inside up to `horizon`.
+    """
+    def margin(t):
+        gaps = []
+        if lower is not None:
+            gaps.append(mean_at(t) - half_at(t) - lower)
+        if upper is not None:
+            gaps.append(upper - mean_at(t) - half_at(t))
+        return min(gaps)
+
+    if margin(0.0) <= 0:
+        return 0.0
+    grid = np.linspace(0.0, horizon, 2001)
+    values = np.array([margin(t) for t in grid])
+    crossed = np.flatnonzero(values <= 0)
+    if not len(crossed):
+        return float("inf")
+    return float(optimize.brentq(margin, grid[crossed[0] - 1], grid[crossed[0]]))
+
+
+@analysis("reg.stability", menu=MENU, title="Stability Study",
+          params=[RESPONSE, Param("time", "Time", "column"),
+                  Param("batch", "Batch", "column", numeric=False, optional=True), LSL, USL, CONFIDENCE,
+                  Param("alpha", "Significance level for pooling batches", "number", default=0.25, minimum=0.0001,
+                        maximum=0.5)])
+def stability_study(ws, response, time, batch=None, lsl="", usl="", confidence=95.0, alpha=0.25):
+    lower, upper = optional_number(lsl), optional_number(usl)
+    if lower is None and upper is None:
+        raise ValueError("Enter at least one specification limit")
+    if lower is not None and upper is not None and lower >= upper:
+        raise ValueError("The lower limit must be less than the upper limit")
+    res = Result("Stability Study")
+    categorical, interactions = ([batch], True) if batch else ([], False)
+    design = build_design(ws, [response], [time], categorical, interactions)
+    y, fit = fit_ols(ws, response, design)
+    if batch:
+        # the batches share a slope, and then an intercept, unless the data say otherwise
+        tests = term_tests(fit, design)
+        selection = [{"Term": f"{time}*{batch}", "P-Value": tests.loc[f"{time}*{batch}", "P-Value"]}]
+        if selection[0]["P-Value"] >= alpha:
+            interactions = False
+            design = build_design(ws, [response], [time], categorical)
+            y, fit = fit_ols(ws, response, design)
+            selection.append({"Term": batch, "P-Value": term_tests(fit, design).loc[batch, "P-Value"]})
+            if selection[1]["P-Value"] >= alpha:
+                categorical = []
+                design = build_design(ws, [response], [time])
+                y, fit = fit_ols(ws, response, design)
+        res.table(pd.DataFrame(selection), title=f"{tr('Model selection')} (α = {alpha:g})", index=False)
+        model = [tr("Separate slopes and intercepts for the batches"), tr("Common slope, separate intercepts"),
+                 tr("Common slope and intercept (batches pooled)")][0 if interactions else 1 if categorical else 2]
+        res.text(f"{tr('Model')}: {model}")
+    res.heading("Regression Equation").text(equation(response, fit.params))
+    res.table(coefficient_table(fit, design), title="Coefficients")
+    res.table(pd.DataFrame([model_summary(fit)]), title="Model Summary", index=False)
+
+    # a single limit is checked with a one-sided bound, two limits with a two-sided interval
+    level = confidence / 100 if lower is None or upper is None else 0.5 + confidence / 200
+    crit = sps.t.ppf(level, fit.df_resid)
+    beta, cov = fit.params.to_numpy(), fit.cov_params().to_numpy()
+    used = ws.df.iloc[design.rows]
+    longest = float(used[time].max())
+    groups = design.levels[batch] if categorical else [tr("All batches")]
+    fig = new_figure()
+    ax = fig.add_subplot()
+    rows = {}
+    for i, group in enumerate(groups):
+        ends = [{time: 0.0, **({batch: group} if categorical else {})}, {time: 1.0, **({batch: group} if categorical else {})}]
+        x0, x1 = design_rows(ws, design, response, [time], categorical, interactions, ends).to_numpy()
+
+        def row(t, x0=x0, x1=x1):   # the model matrix is linear in time
+            return x0 + t * (x1 - x0)
+
+        def mean_at(t, row=row):
+            return float(row(t) @ beta)
+
+        def half_at(t, row=row):
+            return float(crit * np.sqrt(row(t) @ cov @ row(t)))
+
+        life = shelf_life(mean_at, half_at, lower, upper, SHELF_LIFE_SEARCH * longest)
+        rows[group] = {"Intercept": mean_at(0.0), "Slope": mean_at(1.0) - mean_at(0.0), "Shelf life": life}
+        color = PALETTE[i % len(PALETTE)]
+        mask = (used[batch].map(format_value) == group).to_numpy() if categorical else np.ones(len(used), dtype=bool)
+        ax.plot(used[time][mask], y[mask], "o", color=color, markersize=4)
+        end = min(life, SHELF_LIFE_SEARCH * longest) if life > 0 else longest
+        grid = np.linspace(0.0, max(longest, min(end * 1.1, 3 * longest)), 100)
+        ax.plot(grid, [mean_at(t) for t in grid], color=color, label=group)
+        for sign in ([-1] if upper is None else [1] if lower is None else [-1, 1]):
+            ax.plot(grid, [mean_at(t) + sign * half_at(t) for t in grid], color=color, linestyle="--", linewidth=0.8)
+        if 0 < life < np.inf:
+            ax.axvline(life, color=color, linestyle=":", linewidth=0.8)
+    for limit in (lower, upper):
+        if limit is not None:
+            ax.axhline(limit, color=RED)
+    ax.set_xlabel(time), ax.set_ylabel(response), ax.legend()
+    ax.set_title(f"{tr('Stability Study')}: {response}")
+    table = pd.DataFrame.from_dict(rows, orient="index")
+    table.index.name = batch if categorical else tr("Batch")
+    spec = ", ".join(f"{tr(name)} = {value:g}" for name, value in (("Lower spec", lower), ("Upper spec", upper))
+                     if value is not None)
+    res.table(table, title=f"{tr('Shelf life')} ({spec}; {confidence:g}% {tr('confidence')})")
+    overall = table["Shelf life"].min()
+    if np.isinf(overall):
+        res.text(f"{tr('The response stays within specification up to the end of the search')}: "
+                 f"{SHELF_LIFE_SEARCH * longest:g}")
+    else:
+        res.text(f"{tr('Overall shelf life (shortest of the batches)')} = {overall:.5g}")
+    return res.figure(fig)
 
 
 ORDERS = ["Linear", "Quadratic", "Cubic"]

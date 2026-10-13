@@ -7,7 +7,9 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from scipy import optimize
 from scipy import stats as sps
+from scipy.stats import qmc
 
 from openstat.core.registry import Param, analysis
 from openstat.core.result import Result
@@ -15,7 +17,7 @@ from openstat.core.worksheet import format_value
 from openstat.graphs import new_figure
 from openstat.i18n import tr
 from openstat.stats._design import CONSTANT, build_design, complete_rows
-from openstat.stats._tests import CONFIDENCE
+from openstat.stats._tests import ALPHA, CONFIDENCE
 from openstat.stats.regression import PLOTS, STORE, linear_report, residual_plots
 
 MENU = ("Stat", "ANOVA")
@@ -50,7 +52,8 @@ def one_way_table(groups: dict[str, np.ndarray]) -> dict:
             "ms_factor": ms_factor, "mse": mse, "f": f, "p": float(sps.f.sf(f, k - 1, n - k))}
 
 
-COMPARISONS = ["None", "Tukey", "Fisher", "Dunnett (first level is the control)"]
+COMPARISONS = ["None", "Tukey", "Fisher", "Dunnett (first level is the control)", "Games-Howell",
+               "Hsu MCB (largest is best)", "Hsu MCB (smallest is best)"]
 
 
 def pairwise_comparisons(groups: dict[str, np.ndarray], method: str, confidence=95.0) -> pd.DataFrame:
@@ -85,6 +88,72 @@ def dunnett_comparisons(groups: dict[str, np.ndarray], confidence=95.0) -> pd.Da
                         "CI Lower": np.atleast_1d(ci.low), "CI Upper": np.atleast_1d(ci.high),
                         "T-Value": np.atleast_1d(test.statistic), "Adjusted P-Value": np.atleast_1d(test.pvalue)},
                        index=pd.Index([f"{n} − {names[0]}" for n in names[1:]], name="Difference of levels"))
+    return out
+
+
+def games_howell(groups: dict[str, np.ndarray], confidence=95.0) -> pd.DataFrame:
+    """Pairwise comparisons that do not assume equal variances (studentized range on Welch's df)."""
+    if any(len(g) < 2 or g.var(ddof=1) == 0 for g in groups.values()):
+        raise ValueError("Welch's test needs at least two observations and non-zero variance in each level")
+    k, rows = len(groups), {}
+    for a, b in combinations(groups, 2):
+        va, vb = groups[a].var(ddof=1) / len(groups[a]), groups[b].var(ddof=1) / len(groups[b])
+        se = np.sqrt(va + vb)
+        df = (va + vb) ** 2 / (va ** 2 / (len(groups[a]) - 1) + vb ** 2 / (len(groups[b]) - 1))
+        diff = groups[b].mean() - groups[a].mean()
+        half = sps.studentized_range.ppf(confidence / 100, k, df) / np.sqrt(2) * se
+        rows[f"{b} − {a}"] = {"Difference": diff, "SE": se, "DF": df, "CI Lower": diff - half, "CI Upper": diff + half,
+                              "T-Value": diff / se,
+                              "Adjusted P-Value": float(sps.studentized_range.sf(abs(diff) / se * np.sqrt(2), k, df))}
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = "Difference of levels"
+    return out
+
+
+def one_sided_dunnett_critical(lambdas, df: float, level: float) -> float:
+    """d such that P(T_j <= d for every j) = level, for t statistics that share a variance estimate
+    with `df` degrees of freedom and have correlations lambda_j * lambda_l.
+
+    Each T_j is (lambda_j Z + sqrt(1 - lambda_j^2) E_j) / S with independent standard normal Z, E_j;
+    the probability is integrated over Z (Gauss-Hermite) and over the quantiles of S (Gauss-Legendre).
+    """
+    lam = np.asarray(lambdas, dtype=float)[:, None, None]
+    z, wz = np.polynomial.hermite_e.hermegauss(64)
+    u, wu = np.polynomial.legendre.leggauss(128)
+    s = np.sqrt(sps.chi2.ppf((u + 1) / 2, df) / df)
+
+    def probability(d):
+        inside = sps.norm.cdf((d * s[None, :, None] - lam * z[None, None, :]) / np.sqrt(1 - lam ** 2)).prod(axis=0)
+        return float((wu / 2) @ inside @ (wz / np.sqrt(2 * np.pi)))
+    return float(optimize.brentq(lambda d: probability(d) - level, 0.0, 100.0))
+
+
+def hsu_mcb(groups: dict[str, np.ndarray], confidence=95.0, largest=True) -> pd.DataFrame:
+    """Hsu's multiple comparisons with the best: constrained intervals for each level mean minus
+    the best of the other level means (Hsu, 1996, for unequal sample sizes)."""
+    table = one_way_table(groups)
+    names = list(groups)
+    n = np.array([len(groups[name]) for name in names], dtype=float)
+    means = np.array([groups[name].mean() for name in names]) * (1 if largest else -1)
+    s, k = np.sqrt(table["mse"]), len(names)
+    others = [[j for j in range(k) if j != i] for i in range(k)]
+    d = [one_sided_dunnett_critical([np.sqrt(n[j] / (n[i] + n[j])) for j in others[i]], table["df_error"],
+                                    confidence / 100) for i in range(k)]
+
+    def se(i, j):
+        return s * np.sqrt(1 / n[i] + 1 / n[j])
+    upper = [max(0.0, min(means[i] - means[j] + d[i] * se(i, j) for j in others[i])) for i in range(k)]
+    candidates = [i for i in range(k) if upper[i] > 0]   # levels that may be the best
+    rows = {}
+    for i in range(k):
+        rivals = [j for j in candidates if j != i]
+        lower = min(means[i] - means[j] - d[j] * se(i, j) for j in rivals) if rivals else 0.0
+        center = means[i] - max(means[j] for j in others[i])
+        low, mid, high = (lower, center, upper[i]) if largest else (-upper[i], -center, -lower)
+        rows[names[i]] = {"N": int(n[i]), "Mean": float(groups[names[i]].mean()), "Difference from best": mid,
+                          "CI Lower": low, "CI Upper": high}
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = "Level"
     return out
 
 
@@ -143,6 +212,13 @@ def one_way(ws, response, factor, comparisons="None", welch=False, confidence=95
         res.table(pairwise_comparisons(groups, "Fisher", confidence), title="Fisher Pairwise Comparisons")
     elif comparisons == COMPARISONS[3]:
         res.table(dunnett_comparisons(groups, confidence), title="Dunnett Comparisons with a Control")
+    elif comparisons == COMPARISONS[4]:
+        res.table(games_howell(groups, confidence), title="Games-Howell Pairwise Comparisons")
+    elif comparisons in COMPARISONS[5:]:
+        res.table(hsu_mcb(groups, confidence, largest=comparisons == COMPARISONS[5]),
+                  title="Hsu Multiple Comparisons with the Best")
+        res.text(tr("A level whose interval has 0 as its upper limit (lower limit when smallest is best) "
+                    "is not the best."))
 
     fits = np.concatenate([np.full(len(g), g.mean()) for g in groups.values()])
     resid = np.concatenate(list(groups.values())) - fits
@@ -163,6 +239,152 @@ def one_way(ws, response, factor, comparisons="None", welch=False, confidence=95
         fit_col, resid_col = np.full(ws.nrows, np.nan), np.full(ws.nrows, np.nan)
         fit_col[rows[order]], resid_col[rows[order]] = fits, resid
         res.store(f"FITS_{response}", fit_col.tolist()).store(f"RESI_{response}", resid_col.tolist())
+    return res
+
+
+ANOM_POINTS = 15   # 2 ** 15 quasi-random samples
+
+
+def anom_critical(sizes, df: float, alpha: float) -> float:
+    """Critical value h of the analysis of means: the 1 - alpha quantile of the largest standardized
+    deviation of a level mean from the grand mean, max |Ybar_i - Ybar| / (s sqrt((N - n_i) / (N n_i))).
+
+    The level means are not independent of the grand mean, so the quantile is taken from a fixed
+    quasi-Monte Carlo sample of the level means and of the standard deviation.
+    """
+    n = np.asarray(sizes, dtype=float)
+    total = n.sum()
+    u = np.clip(qmc.Sobol(len(n) + 1, seed=7).random_base2(ANOM_POINTS), 1e-12, 1 - 1e-12)
+    means = sps.norm.ppf(u[:, :-1]) / np.sqrt(n)
+    s = np.sqrt(sps.chi2.ppf(u[:, -1], df) / df)
+    deviations = means - (means @ n / total)[:, None]
+    t = deviations / (s[:, None] * np.sqrt((total - n) / (total * n)))
+    return float(np.quantile(np.abs(t).max(axis=1), 1 - alpha))
+
+
+@analysis("anova.anom", menu=MENU, title="Analysis of Means", params=[RESPONSE, FACTOR, ALPHA])
+def analysis_of_means(ws, response, factor, alpha=0.05):
+    groups = factor_groups(ws, response, factor)
+    t = one_way_table(groups)
+    n = np.array([len(g) for g in groups.values()], dtype=float)
+    means = np.array([g.mean() for g in groups.values()])
+    grand = float(np.concatenate(list(groups.values())).mean())
+    h = anom_critical(n, t["df_error"], alpha)
+    half = h * np.sqrt(t["mse"]) * np.sqrt((n.sum() - n) / (n.sum() * n))
+    outside = (means < grand - half) | (means > grand + half)
+    table = pd.DataFrame({"N": n.astype(int), "Mean": means, "Lower limit": grand - half, "Upper limit": grand + half,
+                          "Flag": np.where(outside, "*", "")}, index=pd.Index(list(groups), name=factor))
+    res = Result("Analysis of Means")
+    res.text(f"α = {alpha:g}    {tr('Grand mean')} = {grand:.5g}    {tr('Pooled StDev')} = {np.sqrt(t['mse']):.5g}    "
+             f"h = {h:.4f}")
+    res.table(table)
+    res.text(tr("* the level mean differs from the grand mean") if outside.any()
+             else tr("No level mean differs from the grand mean at this significance level."))
+    fig = new_figure(max(6.0, 1.0 + 0.9 * len(groups)), 4.0)
+    ax = fig.add_subplot()
+    x = np.arange(len(groups))
+    ax.vlines(x, grand, means, color=GRAY)
+    ax.plot(x[~outside], means[~outside], "o", color=BLUE)
+    ax.plot(x[outside], means[outside], "s", color=RED)
+    ax.axhline(grand, color="#70ad47")
+    edges = np.arange(len(groups) + 1) - 0.5
+    for limit in (grand - half, grand + half):
+        ax.stairs(limit, edges, color=RED, baseline=None)
+    ax.set_xticks(x, list(groups))
+    ax.set_xlabel(factor), ax.set_ylabel(f"{tr('Mean')} ({response})")
+    ax.set_title(f"{tr('Analysis of Means')}: {response} (α = {alpha:g})")
+    return res.figure(fig)
+
+
+def balanced_anova_table(frame: pd.DataFrame, response: str, factors: list[str], random=()) -> pd.DataFrame:
+    """ANOVA of a balanced crossed design with fixed and random factors (unrestricted mixed model).
+
+    The expected mean square of a term is the error variance plus, for the term itself and every
+    random term that contains it, N / (levels of that term) times its variance component. A term is
+    tested against the combination of mean squares that has the same expectation without the term.
+    """
+    labels = {f: frame[f].map(format_value) for f in factors}
+    levels = {f: labels[f].nunique() for f in factors}
+    y = frame[response].astype(float)
+    n = len(y)
+    sizes = y.groupby([labels[f] for f in factors]).size()
+    if len(sizes) != np.prod(list(levels.values())) or sizes.nunique() != 1:
+        raise ValueError("The design is not balanced: each combination of levels needs the same number of observations")
+    if min(levels.values()) < 2:
+        raise ValueError("The factor needs at least two levels")
+    terms = [combo for size in range(1, len(factors) + 1) for combo in combinations(factors, size)]
+    if sizes.iloc[0] == 1:
+        terms = terms[:-1]   # without replicates the highest interaction is the error
+    if not terms:
+        raise ValueError("Not enough observations for the error term")
+
+    def fitted_ss(subset):
+        if not subset:
+            return 0.0
+        fitted = y.groupby([labels[f] for f in subset]).transform("mean")
+        return float(((fitted - y.mean()) ** 2).sum())
+
+    def subsets(term):
+        return [c for size in range(len(term) + 1) for c in combinations(term, size)]
+
+    ss = {t: sum((-1) ** (len(t) - len(u)) * fitted_ss(u) for u in subsets(t)) for t in terms}
+    df = {t: int(np.prod([levels[f] - 1 for f in t])) for t in terms}
+    ss["error"] = float(((y - y.mean()) ** 2).sum()) - sum(ss.values())
+    df["error"] = n - 1 - sum(df.values())
+    if df["error"] < 1:
+        raise ValueError("Not enough observations for the error term")
+    ms = {t: ss[t] / df[t] for t in ss}
+
+    def coefficient(term):
+        return n / np.prod([levels[f] for f in term])
+
+    def above(term):   # the random terms that contain this one
+        return [u for u in terms if set(term) < set(u) and set(u) & set(random)]
+
+    expected = {"error": {"error": 1.0}}
+    for t in terms:
+        expected[t] = {"error": 1.0, t: coefficient(t), **{u: coefficient(u) for u in above(t)}}
+    rows = {}
+    for t in terms:
+        basis = ["error"] + above(t)
+        matrix = np.array([[expected[v].get(key, 0.0) for v in basis] for key in basis])
+        target = np.array([expected[t].get(key, 0.0) for key in basis])
+        weights = np.linalg.solve(matrix, target)
+        parts = np.array([w * ms[v] for w, v in zip(weights, basis)])
+        denominator = float(parts.sum())
+        used = np.abs(parts) > 1e-12 * max(abs(denominator), 1e-300)
+        df_den = denominator ** 2 / sum(p ** 2 / df[v] for p, v, keep in zip(parts, basis, used) if keep) \
+            if denominator > 0 else np.nan
+        f = ms[t] / denominator if denominator > 0 else np.nan
+        is_random = bool(set(t) & set(random))
+        rows["*".join(t)] = {"DF": df[t], "SS": ss[t], "MS": ms[t], "F-Value": f, "DF Den": df_den,
+                             "P-Value": float(sps.f.sf(f, df[t], df_den)) if denominator > 0 else np.nan,
+                             "Variance component": max(0.0, (ms[t] - denominator) / coefficient(t)) if is_random
+                             else np.nan}
+    rows["Error"] = {"DF": df["error"], "SS": ss["error"], "MS": ms["error"], "Variance component": ms["error"]}
+    rows["Total"] = {"DF": n - 1, "SS": float(((y - y.mean()) ** 2).sum())}
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = "Source"
+    return out
+
+
+@analysis("anova.balanced", menu=MENU, title="Balanced ANOVA",
+          params=[RESPONSE, FACTORS, Param("random", "Random factors", "columns", numeric=False, optional=True)])
+def balanced_anova(ws, response, factors, random=None):
+    factors = list(dict.fromkeys(factors))
+    random = [f for f in (random or []) if f in factors]
+    frame = ws.df[[response] + factors].dropna()
+    table = balanced_anova_table(frame, response, factors, random)
+    res = Result("Balanced ANOVA")
+    info = pd.DataFrame({"Type": [tr("random") if f in random else tr("fixed") for f in factors],
+                         "Levels": [frame[f].nunique() for f in factors]}, index=pd.Index(factors, name="Factor"))
+    res.table(info, title="Factor Information")
+    if not random:
+        table = table.drop(columns=["DF Den", "Variance component"])
+    res.table(table, title="Analysis of Variance")
+    if random:
+        res.text(tr("Unrestricted mixed model: each term is tested against the mean squares with the same "
+                    "expectation; DF Den is by Satterthwaite when they are combined."))
     return res
 
 
