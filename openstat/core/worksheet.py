@@ -102,6 +102,7 @@ class Worksheet:
         self.df = normalize_frame(pd.DataFrame() if df is None else df)
         self.formulas: dict[str, str] = {}          # column name -> expression that fills it
         self.formula_errors: dict[str, str] = {}    # formulas that failed in the last recalculation
+        self.formats: dict[str, list[dict]] = {}    # column name -> conditional formatting rules
 
     @property
     def nrows(self) -> int:
@@ -165,6 +166,7 @@ class Worksheet:
             raise ValueError(f"Column name already in use: {new_name}")
         self.df = self.df.rename(columns={old: new_name})
         self.formulas = {new_name if k == old else k: v for k, v in self.formulas.items()}
+        self.formats = {new_name if k == old else k: v for k, v in self.formats.items()}
         self.recalculate()
 
     def add_column(self, name: str, values) -> str:

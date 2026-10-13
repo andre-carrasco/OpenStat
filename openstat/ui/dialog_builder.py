@@ -14,7 +14,8 @@ def candidate_columns(ws: Worksheet, param: Param) -> list[str]:
 
 
 class AnalysisDialog(QDialog):
-    def __init__(self, analysis: Analysis, ws: Worksheet, parent=None, worksheets: list[Worksheet] | None = None):
+    def __init__(self, analysis: Analysis, ws: Worksheet, parent=None, worksheets: list[Worksheet] | None = None,
+                 initial: dict | None = None):
         super().__init__(parent)
         self.analysis = analysis
         self.ws = ws
@@ -35,6 +36,27 @@ class AnalysisDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+        self.set_values(initial or {})
+
+    def set_values(self, values: dict) -> None:
+        """Fill the dialog in; names that are not parameters and values that do not fit are ignored."""
+        for param in self.analysis.params:
+            if param.name not in values:
+                continue
+            w, value = self.widgets[param.name], values[param.name]
+            if param.kind == "columns":
+                for i in range(w.count()):
+                    w.item(i).setSelected(w.item(i).text() in (value or []))
+            elif param.kind in ("column", "choice", "worksheet"):
+                index = w.findData(value)
+                if index >= 0:
+                    w.setCurrentIndex(index)
+            elif param.kind in ("number", "int"):
+                w.setValue(value)
+            elif param.kind == "bool":
+                w.setChecked(bool(value))
+            else:
+                w.setText(str(value))
 
     def _make_widget(self, param: Param):
         if param.kind == "columns":

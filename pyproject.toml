@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openstat"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source statistical analysis desktop application"
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+odbc = ["pyodbc"]
 
 [project.gui-scripts]
 openstat = "openstat.__main__:main"

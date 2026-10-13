@@ -42,6 +42,14 @@ Projetos são salvos em `.ostat` (um zip com as planilhas em Parquet e a saída 
 por CSV, TXT ou Excel, ou colados da área de transferência. A saída pode ser exportada em HTML, PDF
 ou Word.
 
+**Assistente** guia a escolha da análise por perguntas e abre o diálogo certo; o **Construtor de
+gráficos** sugere tipos de gráfico a partir das colunas escolhidas. Na planilha, o menu do cabeçalho
+da coluna aplica **formatação condicional** (maior, menor, igual, faltante, atípico). **Arquivo >
+Importar de banco de dados** lê uma consulta SQL de um arquivo SQLite ou de uma conexão ODBC
+(`pip install openstat[odbc]`). Itens selecionados no navegador podem ser exportados à parte, e
+notas podem ser acrescentadas à saída. **Ferramentas > Salvar sessão como script** grava as análises
+executadas como comandos `run(...)`, que **Executar script** repete.
+
 As colunas são numéricas, de texto (`-T` no cabeçalho) ou de data/hora (`-D`). Datas são digitadas
 como `aaaa-mm-dd` ou `dd/mm/aaaa` (`mm/dd/aaaa` em inglês), com hora opcional. Uma coluna com fórmula
 (**Calc > Atribuir fórmula à coluna**, `=` no cabeçalho) é recalculada sempre que a planilha muda.

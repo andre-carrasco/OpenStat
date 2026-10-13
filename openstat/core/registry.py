@@ -51,6 +51,19 @@ def analysis(id: str, menu: tuple[str, ...], title: str, params: list[Param]):
     return decorator
 
 
+def format_call(a: Analysis, values: dict) -> str:
+    """The console command that runs analysis `a` with these values; defaults are left out."""
+    parts = []
+    for p in a.params:
+        value = values.get(p.name)
+        if p.kind == "worksheet":
+            value = getattr(value, "name", value)
+        if value is None or value == [] or (p.kind not in ("column", "columns", "worksheet") and value == p.default):
+            continue
+        parts.append(f"{p.name}={value!r}")
+    return f"run({', '.join([repr(a.id)] + parts)})"
+
+
 def all_analyses() -> list[Analysis]:
     load_builtin()
     return list(_REGISTRY.values())

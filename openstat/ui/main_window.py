@@ -5,7 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPdfWriter, QPixmap
-from PySide6.QtWidgets import (QDockWidget, QFileDialog, QInputDialog, QListWidget, QMainWindow, QMenu, QMessageBox,
+from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDockWidget, QFileDialog, QFormLayout,
+                               QInputDialog, QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QSplitter, QTabWidget)
 
 from openstat import __version__
@@ -15,6 +16,7 @@ from openstat.core.project import OutputItem, Project
 from openstat.core.result import Result, wrap_document
 from openstat.core.worksheet import Worksheet
 from openstat.i18n import language, tr
+from openstat.ui.assistant_dialog import AssistantDialog, GraphBuilderDialog
 from openstat.ui.console import Console
 from openstat.ui.dialog_builder import AnalysisDialog
 from openstat.ui.output_view import OutputView
@@ -26,6 +28,29 @@ STAT_ORDER = ["Basic Statistics", "Regression", "ANOVA", "DOE", "Control Charts"
               "Reliability/Survival", "Predictive Analytics", "Multivariate", "Time Series", "Tables",
               "Nonparametrics", "Equivalence Tests", "Power and Sample Size"]
 LANGUAGES = {"pt_BR": "Português (Brasil)", "en": "English"}
+
+
+SCRIPT_FILTER = "Python (*.py)"
+
+
+class QueryDialog(QDialog):
+    """Asks where the data are and which query brings them."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Import from Database..."))
+        self.setMinimumWidth(520)
+        self.connection, self.query = QLineEdit(), QPlainTextEdit("SELECT * FROM ")
+        self.connection.setPlaceholderText(tr("SQLite file, or an ODBC connection string such as DSN=name"))
+        form = QFormLayout(self)
+        form.addRow(tr("Connection") + ":", self.connection)
+        form.addRow(tr("Query") + ":", self.query)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
 
 
 def app_icon() -> QIcon:
@@ -51,6 +76,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.project = Project()
         self.dirty = False
+        self.session: list[str] = []   # the analyses run so far, as console commands
         self.resize(1200, 800)
         self.setWindowIcon(app_icon())
 
@@ -64,6 +90,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self.navigator = QListWidget()
+        self.navigator.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.navigator.currentRowChanged.connect(self._navigate)
         dock = QDockWidget(tr("Navigator"), self)
         dock.setWidget(self.navigator)
@@ -97,14 +124,23 @@ class MainWindow(QMainWindow):
         self._action(file_menu, "Save Project As...", self.save_project_as)
         file_menu.addSeparator()
         self._action(file_menu, "Import Data...", self.import_data)
+        self._action(file_menu, "Import from Database...", self.import_database)
         self._action(file_menu, "Export Worksheet as CSV...", self.export_worksheet)
-        export_menu = file_menu.addMenu(tr("Export Output"))
-        self._action(export_menu, "HTML...", lambda: self.export_output("html"), translate=False)
-        self._action(export_menu, "PDF...", lambda: self.export_output("pdf"), translate=False)
-        self._action(export_menu, "Word (.docx)...", lambda: self.export_output("docx"), translate=False)
+        file_menu.addSeparator()
+        for title, selected in (("Export Output", False), ("Export Selected Output", True)):
+            export_menu = file_menu.addMenu(tr(title))
+            for label, kind in (("HTML...", "html"), ("PDF...", "pdf"), ("Word (.docx)...", "docx")):
+                self._action(export_menu, label, lambda kind=kind, selected=selected:
+                             self.export_output(kind, selected=selected), translate=False)
+        self._action(file_menu, "Add Note to Output...", self.add_note)
+        self._action(file_menu, "Remove Selected Output", self.remove_selected_output)
         self._action(file_menu, "Clear Output", self.clear_output)
         file_menu.addSeparator()
         self._action(file_menu, "Exit", self.close)
+
+        assistant_menu = bar.addMenu(tr("Assistant"))
+        self._action(assistant_menu, "Choose an Analysis...", self.open_assistant)
+        self._action(assistant_menu, "Graph Builder...", self.open_graph_builder)
 
         menus: dict[tuple, QMenu] = {}
         def submenu_rank(a):
@@ -128,6 +164,8 @@ class MainWindow(QMainWindow):
         toggle.setText(tr("Command Line"))
         toggle.setShortcut("Ctrl+L")
         tools_menu.addAction(toggle)
+        self._action(tools_menu, "Save Session as Script...", self.save_session)
+        self._action(tools_menu, "Run Script...", self.run_script)
         self._action(tools_menu, "Open Plugins Folder", self.open_plugins_folder)
         language_menu = tools_menu.addMenu(tr("Language"))
         for code_, name in LANGUAGES.items():
@@ -236,27 +274,60 @@ class MainWindow(QMainWindow):
         if path:
             self._guarded(lambda: [self.add_worksheet(ws) for ws in io.import_file(path)])
 
+    def import_database(self) -> None:
+        dialog = QueryDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            self._guarded(lambda: self.add_worksheet(io.import_sql(dialog.connection.text(),
+                                                                   dialog.query.toPlainText())))
+
     def export_worksheet(self) -> None:
         ws = self.current_worksheet()
         path, _ = QFileDialog.getSaveFileName(self, tr("Export Worksheet as CSV..."), f"{ws.name}.csv", "CSV (*.csv)")
         if path:
             self._guarded(lambda: io.export_csv(ws, path))
 
-    def output_html(self) -> str:
-        return wrap_document("\n<hr>\n".join(o.html for o in self.project.outputs))
+    def selected_outputs(self) -> list[int]:
+        """Positions of the output items selected in the navigator."""
+        return sorted(index.row() for index in self.navigator.selectedIndexes())
 
-    def export_output(self, kind: str, path: str | None = None) -> None:
+    def output_html(self, selected: bool = False) -> str:
+        outputs = [self.project.outputs[i] for i in self.selected_outputs()] if selected else self.project.outputs
+        return wrap_document("\n<hr>\n".join(o.html for o in outputs))
+
+    def export_output(self, kind: str, path: str | None = None, selected: bool = False) -> None:
+        if selected and not self.selected_outputs():
+            QMessageBox.information(self, "OpenStat", tr("Select the items to export in the navigator."))
+            return
         filters = {"html": "HTML (*.html)", "pdf": "PDF (*.pdf)", "docx": "Word (*.docx)"}
         if path is None:
             path, _ = QFileDialog.getSaveFileName(self, tr("Export Output"), f"output.{kind}", filters[kind])
         if not path:
             return
         if kind == "html":
-            self._guarded(lambda: Path(path).write_text(self.output_html(), encoding="utf-8"))
+            self._guarded(lambda: Path(path).write_text(self.output_html(selected), encoding="utf-8"))
         elif kind == "docx":
-            self._guarded(lambda: export_docx(self.output_html(), path))
+            self._guarded(lambda: export_docx(self.output_html(selected), path))
         else:
-            self._guarded(lambda: self.output.document().print_(QPdfWriter(str(path))))
+            view = self.output
+            if selected:   # a view of its own lays out just the chosen items, with their figures
+                view = OutputView()
+                view.show_outputs([self.project.outputs[i] for i in self.selected_outputs()])
+            self._guarded(lambda: view.document().print_(QPdfWriter(str(path))))
+
+    def add_note(self, text: str | None = None) -> None:
+        if text is None:
+            text, ok = QInputDialog.getMultiLineText(self, tr("Add Note to Output..."), tr("Note") + ":")
+            if not ok:
+                return
+        if text.strip():
+            self.add_result(Result("Note").text(text.strip()), self.current_worksheet())
+
+    def remove_selected_output(self) -> None:
+        chosen = set(self.selected_outputs())
+        if chosen:
+            self.project.outputs = [o for i, o in enumerate(self.project.outputs) if i not in chosen]
+            self._refresh_output()
+            self.mark_dirty()
 
     def clear_output(self) -> None:
         self.project.outputs.clear()
@@ -277,6 +348,45 @@ class MainWindow(QMainWindow):
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    def record(self, a: registry.Analysis, values: dict) -> None:
+        """Remember an analysis that was run, as the console command that repeats it."""
+        self.session.append(registry.format_call(a, values))
+
+    def session_script(self) -> str:
+        return "# OpenStat session: run with Tools > Run Script, on a worksheet with the same columns\n" \
+            + "\n".join(self.session) + "\n"
+
+    def save_session(self, path: str | None = None) -> None:
+        if not self.session:
+            QMessageBox.information(self, "OpenStat", tr("No analysis has been run in this session yet."))
+            return
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, tr("Save Session as Script..."), "session.py", SCRIPT_FILTER)
+        if path:
+            self._guarded(lambda: Path(path).write_text(self.session_script(), encoding="utf-8"))
+
+    def run_script(self, path: str | None = None) -> None:
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, tr("Run Script..."), "", SCRIPT_FILTER)
+        if not path:
+            return
+        self.console_dock.show()   # what the script prints, and its errors, appear in the command line
+        self._guarded(lambda: self.console.run_script(Path(path).read_text(encoding="utf-8"), Path(path).name))
+
+    def open_assistant(self) -> None:
+        dialog = AssistantDialog(self)
+        if dialog.exec() == QDialog.Accepted and dialog.chosen:
+            self.run_analysis(registry.get(dialog.chosen))
+
+    def open_graph_builder(self) -> None:
+        ws = self.current_worksheet()
+        if ws.ncols == 0:
+            QMessageBox.information(self, "OpenStat", tr("The worksheet has no data."))
+            return
+        dialog = GraphBuilderDialog(ws, self)
+        if dialog.exec() == QDialog.Accepted and dialog.chosen:
+            self.run_analysis(*dialog.chosen)
+
     def set_language(self, code_: str) -> None:
         QSettings("OpenStat", "OpenStat").setValue("language", code_)
         QMessageBox.information(self, "OpenStat", tr("The language will change the next time OpenStat starts."))
@@ -289,15 +399,20 @@ class MainWindow(QMainWindow):
     def current_worksheet(self) -> Worksheet:
         return self.current_view().ws
 
-    def run_analysis(self, a: registry.Analysis) -> None:
+    def run_analysis(self, a: registry.Analysis, initial: dict | None = None) -> None:
         ws = self.current_worksheet()
         if ws.ncols == 0 and any(p.kind in ("column", "columns") for p in a.params):
             QMessageBox.information(self, "OpenStat", tr("The worksheet has no data."))
             return
-        dialog = AnalysisDialog(a, ws, self, self.project.worksheets)
+        dialog = AnalysisDialog(a, ws, self, self.project.worksheets, initial)
         if dialog.exec() != AnalysisDialog.Accepted:
             return
-        self._guarded(lambda: self.add_result(a.func(ws, **dialog.values()), ws))
+
+        def run():
+            values = dialog.values()
+            self.add_result(a.func(ws, **values), ws)
+            self.record(a, values)
+        self._guarded(run)
 
     def add_result(self, result: Result, ws: Worksheet) -> None:
         for name, values in result.stored.items():
@@ -322,7 +437,7 @@ class MainWindow(QMainWindow):
 
     def _navigate(self, row: int) -> None:
         if row >= 0:
-            self.output.scrollToAnchor(f"r{row}")
+            self.output.scrollToAnchor(f"o{row}")
 
     def about(self) -> None:
         QMessageBox.about(self, tr("About OpenStat"),

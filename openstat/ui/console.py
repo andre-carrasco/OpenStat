@@ -75,6 +75,7 @@ class Console(QWidget):
             if p.kind == "worksheet" and isinstance(parameters.get(p.name), str):
                 parameters[p.name] = by_name[parameters[p.name]]
         self.window_.add_result(a.func(ws, **parameters), ws)
+        self.window_.record(a, parameters)
 
     def analyses(self, text: str = "") -> None:
         for a in registry.all_analyses():
@@ -92,15 +93,26 @@ class Console(QWidget):
 
     def execute(self, text: str) -> str:
         """Run one line; returns what it printed."""
-        ws = self.window_.current_worksheet()
-        self.namespace["ws"], self.namespace["df"] = ws, ws.df
         self.log.appendPlainText(("... " if self.pending else ">>> ") + text)
         self.pending.append(text)
+        source = "\n".join(self.pending)
+
+        def run():
+            if not self.interpreter.runsource(source, "<console>"):
+                self.pending = []
+        return self._run(run)
+
+    def run_script(self, source: str, name: str = "<script>") -> str:
+        """Run a whole script, such as a saved session; returns what it printed."""
+        self.log.appendPlainText(f">>> # {name}")
+        return self._run(lambda: self.interpreter.runsource(source, name, "exec"))
+
+    def _run(self, action) -> str:
+        ws = self.window_.current_worksheet()
+        self.namespace["ws"], self.namespace["df"] = ws, ws.df
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-            incomplete = self.interpreter.runsource("\n".join(self.pending), "<console>")
-        if not incomplete:
-            self.pending = []
+            action()
         output = buffer.getvalue().rstrip()
         if output:
             self.log.appendPlainText(output)

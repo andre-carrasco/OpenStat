@@ -6,7 +6,7 @@ import ast
 import json
 from pathlib import Path
 
-from openstat.core import registry
+from openstat.core import assistant, formatting, registry
 
 ROOT = Path(__file__).resolve().parents[1] / "openstat"
 TABLE = json.loads((ROOT / "i18n" / "pt_BR.json").read_text(encoding="utf-8"))
@@ -35,7 +35,8 @@ def source_strings() -> set[str]:
 
 
 def registry_strings() -> set[str]:
-    found = set()
+    """Strings that reach tr() through data rather than as literals."""
+    found = assistant.strings() | set(formatting.RULES) | set(formatting.COLORS)
     for a in registry.all_analyses():
         found.add(a.title)
         found.update(a.menu)

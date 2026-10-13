@@ -2,13 +2,13 @@
 import json
 from pathlib import Path
 
-from openstat.core import registry
+from openstat.core import assistant, formatting, registry
 
 TABLE = json.loads((Path(registry.__file__).parents[1] / "i18n" / "pt_BR.json").read_text(encoding="utf-8"))
 
 
 def test_registry_strings_translated():
-    strings = set()
+    strings = assistant.strings() | set(formatting.RULES) | set(formatting.COLORS)
     for a in registry.all_analyses():
         strings.add(a.title)
         strings.update(a.menu)

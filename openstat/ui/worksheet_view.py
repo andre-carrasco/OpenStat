@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtGui import QGuiApplication, QKeySequence
-from PySide6.QtWidgets import QInputDialog, QMessageBox, QTableView
+from PySide6.QtGui import QColor, QGuiApplication, QKeySequence
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QInputDialog, QLineEdit, QMenu,
+                               QMessageBox, QTableView)
 
+from openstat.core.formatting import COLORS, RULES, column_colors, make_rule
 from openstat.core.worksheet import Worksheet
 from openstat.i18n import tr
 
@@ -12,10 +14,38 @@ EXTRA_ROWS = 100
 EXTRA_COLS = 20
 
 
+class FormatDialog(QDialog):
+    """Asks for one conditional formatting rule."""
+
+    def __init__(self, column: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{tr('Conditional Formatting')}: {column}")
+        self.kind, self.value, self.color = QComboBox(), QLineEdit(), QComboBox()
+        for name in RULES:
+            self.kind.addItem(tr(name), name)
+        for name in COLORS:
+            self.color.addItem(tr(name), name)
+        form = QFormLayout(self)
+        form.addRow(tr("Highlight cells that are") + ":", self.kind)
+        form.addRow(tr("Value") + ":", self.value)
+        form.addRow(tr("Color") + ":", self.color)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def rule(self) -> dict:
+        return make_rule(self.kind.currentData(), self.value.text(), self.color.currentData())
+
+
 class WorksheetModel(QAbstractTableModel):
     def __init__(self, worksheet: Worksheet, parent=None):
         super().__init__(parent)
         self.ws = worksheet
+        self._colors: dict[str, list] = {}   # conditional formatting of each column, until the next change
+        self.modelAboutToBeReset.connect(lambda: self._colors.clear())
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else self.ws.nrows + EXTRA_ROWS
@@ -23,11 +53,26 @@ class WorksheetModel(QAbstractTableModel):
     def columnCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else self.ws.ncols + EXTRA_COLS
 
+    def background(self, row: int, column: int) -> str | None:
+        if row >= self.ws.nrows or column >= self.ws.ncols:
+            return None
+        name = self.ws.df.columns[column]
+        if name not in self.ws.formats:
+            return None
+        if name not in self._colors:
+            self._colors[name] = column_colors(self.ws, name)
+        return self._colors[name][row]
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
         if role in (Qt.DisplayRole, Qt.EditRole):
             return self.ws.get_text(index.row(), index.column())
+        if role == Qt.BackgroundRole:
+            color = self.background(index.row(), index.column())
+            return QColor(color) if color else None
+        if role == Qt.ForegroundRole and self.background(index.row(), index.column()):
+            return QColor("black")   # the highlight colors are light, whatever the theme
         if role == Qt.TextAlignmentRole and index.column() < self.ws.ncols:
             numeric = self.ws.is_numeric(self.ws.df.columns[index.column()])
             return int((Qt.AlignRight if numeric else Qt.AlignLeft) | Qt.AlignVCenter)
@@ -85,9 +130,40 @@ class WorksheetView(QTableView):
         self.horizontalHeader().setDefaultSectionSize(90)
         self.verticalHeader().setDefaultSectionSize(22)
         self.horizontalHeader().sectionDoubleClicked.connect(self.rename_column)
+        self.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.horizontalHeader().customContextMenuRequested.connect(self._header_menu)
 
     def refresh(self) -> None:
         self.model_.refresh()
+
+    def _header_menu(self, position) -> None:
+        section = self.horizontalHeader().logicalIndexAt(position)
+        if section < 0 or section >= self.ws.ncols:
+            return
+        name = self.ws.df.columns[section]
+        menu = QMenu(self)
+        menu.addAction(tr("Rename column") + "...", lambda: self.rename_column(section))
+        menu.addAction(tr("Conditional Formatting") + "...", lambda: self.add_format(name))
+        clear = menu.addAction(tr("Clear Conditional Formatting"), lambda: self.set_formats(name, []))
+        clear.setEnabled(name in self.ws.formats)
+        menu.exec(self.horizontalHeader().mapToGlobal(position))
+
+    def add_format(self, name: str) -> None:
+        dialog = FormatDialog(name, self)
+        if dialog.exec() == QDialog.Accepted:
+            try:
+                rule = dialog.rule()
+            except ValueError as exc:
+                QMessageBox.warning(self, tr("Error"), tr(str(exc)))
+                return
+            self.set_formats(name, self.ws.formats.get(name, []) + [rule])
+
+    def set_formats(self, name: str, rules: list[dict]) -> None:
+        if rules:
+            self.ws.formats[name] = rules
+        else:
+            self.ws.formats.pop(name, None)
+        self.refresh()
 
     def rename_column(self, section: int) -> None:
         if section >= self.ws.ncols:

@@ -24,6 +24,7 @@ class OutputView(QTextBrowser):
         return super().loadResource(type_, url)
 
     def show_outputs(self, outputs, scroll_to: int | None = None) -> None:
-        self.setHtml(wrap_document("\n<hr>\n".join(o.html for o in outputs)))
+        # each item gets an anchor for its position now, which changes when items are removed
+        self.setHtml(wrap_document("\n<hr>\n".join(f'<a name="o{i}"></a>{o.html}' for i, o in enumerate(outputs))))
         if scroll_to is not None:
-            self.scrollToAnchor(f"r{scroll_to}")
+            self.scrollToAnchor(f"o{scroll_to}")
