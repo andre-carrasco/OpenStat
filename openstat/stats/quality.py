@@ -16,7 +16,7 @@ from openstat.stats._spc import (MEASUREMENTS, SUBGROUP_COLUMN, SUBGROUP_SIZE, d
 from openstat.stats._tests import CONFIDENCE
 from openstat.stats._util import anderson_darling_normal, clean, median_ranks
 from openstat.stats.basic import clopper_pearson, poisson_rate_ci
-from openstat.stats.control import (attribute_data, imr_limits, p_limits, range_limits, u_limits,
+from openstat.stats.control import (attribute_data, between_within, imr_limits, p_limits, range_limits, u_limits,
                                     xbar_limits)
 
 MENU = ("Stat", "Quality Tools")
@@ -363,6 +363,55 @@ def capability(ws, column, subgroup_size=5, subgroup_col=None, lsl="", usl="", t
     return res
 
 
+@analysis("quality.capability_between_within", menu=CAPABILITY_MENU, title="Capability Analysis (Between/Within)",
+          params=CAPABILITY_PARAMS)
+def capability_between_within(ws, column, subgroup_size=5, subgroup_col=None, lsl="", usl="", target=""):
+    low, high = spec_limits(lsl, usl)
+    goal = optional_number(target)
+    groups = make_subgroups(ws, column, subgroup_size, subgroup_col)
+    parts = between_within(groups)
+    out = capability_normal(groups, low, high, goal)
+    # the potential capability counts the variation between subgroups as part of the process
+    out["within"] = parts["total"]
+    out["cp"] = capability_indices(out["mean"], parts["total"], low, high)
+    out["ppm"]["Expected within"] = (
+        ppm(sps.norm.cdf(low, out["mean"], parts["total"])) if low is not None else 0.0,
+        ppm(sps.norm.sf(high, out["mean"], parts["total"])) if high is not None else 0.0)
+    fig = new_figure(7.0, 4.2)
+    capability_histogram(fig.add_subplot(), np.concatenate(groups), out, low, high, goal,
+                         f"{tr('Process Capability')}: {column}")
+    res = Result("Capability Analysis (Between/Within)").figure(fig)
+    res.table(pd.DataFrame({"StDev": [parts["between"], parts["within"], parts["total"], out["overall"]]},
+                           index=pd.Index(["Between", "Within", "Between/Within", "Overall"], name="Source")),
+              title="Estimated standard deviations", digits=5)
+    res.text(tr("In the tables below, within stands for the between/within standard deviation."))
+    capability_tables(res, out, low, high, goal)
+    return res
+
+
+@analysis("quality.capability_multiple", menu=CAPABILITY_MENU, title="Capability Analysis for Multiple Variables",
+          params=[Param("columns", "Variables", "columns"), SUBGROUP_SIZE, LSL, USL, TARGET])
+def capability_multiple(ws, columns, subgroup_size=5, lsl="", usl="", target=""):
+    low, high = spec_limits(lsl, usl)
+    goal = optional_number(target)
+    rows, outs = {}, {}
+    for name in columns:
+        groups = make_subgroups(ws, name, subgroup_size)
+        out = outs[name] = capability_normal(groups, low, high, goal)
+        rows[name] = {"N": out["n"], "Mean": out["mean"], "StDev (within)": out["within"],
+                      "StDev (overall)": out["overall"], "Cp": out["cp"]["potential"], "Cpk": out["cp"]["k"],
+                      "Pp": out["pp"]["potential"], "Ppk": out["pp"]["k"], "Cpm": out["cpm"],
+                      "PPM Total (overall)": sum(out["ppm"]["Expected overall"])}
+    table = pd.DataFrame.from_dict(rows, orient="index")
+    table.index.name = "Variable"
+    fig = new_figure(max(6.0, 3.2 * len(columns)), 3.6)
+    axes = fig.subplots(1, len(columns), squeeze=False)[0]
+    for ax, name in zip(axes, columns):
+        capability_histogram(ax, clean(ws.df[name]), outs[name], low, high, goal, name)
+    res = Result("Capability Analysis for Multiple Variables")
+    return res.table(table, digits=3).figure(fig)
+
+
 NONNORMAL = [n for n in distfit.NAMES if n != "Normal"]
 
 
@@ -499,29 +548,55 @@ def tolerance_factor(n: int, coverage: float, confidence: float) -> float:
     return float(np.sqrt(nu * (1 + 1 / n) * z ** 2 / sps.chi2.ppf(1 - confidence, nu)))
 
 
+def one_sided_tolerance_factor(n: int, coverage: float, confidence: float) -> float:
+    """Exact one-sided normal tolerance factor, from the noncentral t distribution."""
+    return float(sps.nct.ppf(confidence, n - 1, sps.norm.ppf(coverage) * np.sqrt(n)) / np.sqrt(n))
+
+
+TOLERANCE_SIDES = ["Two-sided", "Lower bound", "Upper bound"]
+TOLERANCE_DISTRIBUTIONS = ["Normal", "Lognormal"]
+
+
 @analysis("quality.tolerance", menu=MENU, title="Tolerance Intervals",
           params=[Param("columns", "Variables", "columns"), CONFIDENCE,
                   Param("coverage", "Minimum percentage of population in interval", "number", default=95.0,
-                        minimum=1, maximum=99.999)])
-def tolerance_intervals(ws, columns, confidence=95.0, coverage=95.0):
+                        minimum=1, maximum=99.999),
+                  Param("side", "Interval", "choice", default=TOLERANCE_SIDES[0], choices=TOLERANCE_SIDES),
+                  Param("distribution", "Distribution", "choice", default=TOLERANCE_DISTRIBUTIONS[0],
+                        choices=TOLERANCE_DISTRIBUTIONS)])
+def tolerance_intervals(ws, columns, confidence=95.0, coverage=95.0, side=TOLERANCE_SIDES[0],
+                        distribution=TOLERANCE_DISTRIBUTIONS[0]):
     conf, cov = confidence / 100, coverage / 100
-    normal, nonpar = {}, {}
+    lognormal = distribution == TOLERANCE_DISTRIBUTIONS[1]
+    parametric, nonpar = {}, {}
     for name in columns:
         x = clean(ws.df[name])
         n = len(x)
         if n < 2:
             raise ValueError(f"{name}: at least two observations are needed")
-        mean, sd = x.mean(), x.std(ddof=1)
-        k = tolerance_factor(n, cov, conf)
-        normal[name] = {"N": n, "Mean": mean, "StDev": sd, "Lower": mean - k * sd, "Upper": mean + k * sd, "k": k}
-        achieved = 1 - n * cov ** (n - 1) + (n - 1) * cov ** n
-        nonpar[name] = {"Lower": x.min(), "Upper": x.max(), "Achieved confidence (%)": 100 * achieved}
+        if lognormal and (x <= 0).any():
+            raise ValueError(f"{name}: the lognormal distribution needs positive data")
+        y = np.log(x) if lognormal else x   # a lognormal interval is the normal one on the logarithms
+        mean, sd = y.mean(), y.std(ddof=1)
+        k = tolerance_factor(n, cov, conf) if side == TOLERANCE_SIDES[0] else one_sided_tolerance_factor(n, cov, conf)
+        lower = mean - k * sd if side != TOLERANCE_SIDES[2] else -np.inf
+        upper = mean + k * sd if side != TOLERANCE_SIDES[1] else np.inf
+        if lognormal:
+            lower, upper = np.exp(lower), np.exp(upper)
+        parametric[name] = {"N": n, "Mean": x.mean(), "StDev": x.std(ddof=1), "Lower": lower, "Upper": upper, "k": k}
+        if side == TOLERANCE_SIDES[0]:
+            achieved = 1 - n * cov ** (n - 1) + (n - 1) * cov ** n
+            nonpar[name] = {"Lower": x.min(), "Upper": x.max(), "Achieved confidence (%)": 100 * achieved}
+        else:   # the smallest (largest) observation bounds the population with confidence 1 - coverage^n
+            nonpar[name] = {"Lower": x.min() if side == TOLERANCE_SIDES[1] else -np.inf,
+                            "Upper": x.max() if side == TOLERANCE_SIDES[2] else np.inf,
+                            "Achieved confidence (%)": 100 * (1 - cov ** n)}
     res = Result("Tolerance Intervals")
     res.text(f"{tr('Confidence level (%)')}: {confidence:g}    "
-             f"{tr('Minimum percentage of population in interval')}: {coverage:g}")
-    table = pd.DataFrame.from_dict(normal, orient="index")
+             f"{tr('Minimum percentage of population in interval')}: {coverage:g}    {tr(side)}")
+    table = pd.DataFrame.from_dict(parametric, orient="index")
     table.index.name = "Variable"
-    res.table(table, title="Normal method")
+    res.table(table, title="Lognormal method" if lognormal else "Normal method")
     table = pd.DataFrame.from_dict(nonpar, orient="index")
     table.index.name = "Variable"
     return res.table(table, title="Nonparametric method (smallest and largest observation)")
@@ -572,3 +647,148 @@ def acceptance_sampling(ws, aql=1.0, rql=5.0, alpha=0.05, beta=0.10):
                                                          sps.binom.sf(c, n, rql / 100)]},
                            index=pd.Index([f"AQL {aql:g}%", f"RQL {rql:g}%"], name="Percent defective")))
     return res.figure(fig)
+
+
+def variables_plan(aql: float, rql: float, alpha=0.05, beta=0.10, sigma_known=False) -> tuple[int, float]:
+    """Sample size n and critical distance k of a single-limit variables plan (normal data).
+
+    The lot is accepted when the mean is at least k standard deviations inside the limit.
+    """
+    if not 0 < aql < rql < 1:
+        raise ValueError("The AQL must be less than the RQL, both between 0 and 100%")
+    z_alpha, z_beta = sps.norm.isf(alpha), sps.norm.isf(beta)
+    z_aql, z_rql = sps.norm.isf(aql), sps.norm.isf(rql)
+    k = (z_alpha * z_rql + z_beta * z_aql) / (z_alpha + z_beta)
+    n = ((z_alpha + z_beta) / (z_aql - z_rql)) ** 2
+    if not sigma_known:
+        n *= 1 + k ** 2 / 2
+    return max(2, int(np.ceil(n))), float(k)
+
+
+def variables_acceptance(defective, n: int, k: float, sigma_known=False):
+    """Probability of accepting a lot with the given fraction defective."""
+    z = sps.norm.isf(np.asarray(defective, dtype=float))
+    if sigma_known:
+        return sps.norm.cdf(np.sqrt(n) * (z - k))
+    return sps.nct.sf(k * np.sqrt(n), n - 1, z * np.sqrt(n))
+
+
+@analysis("quality.acceptance_variables", menu=MENU, title="Acceptance Sampling by Variables",
+          params=[Param("aql", "Acceptable quality level (AQL, %)", "number", default=1.0, minimum=1e-6, maximum=99),
+                  Param("rql", "Rejectable quality level (RQL, %)", "number", default=5.0, minimum=1e-6, maximum=99.9),
+                  Param("alpha", "Producer's risk (alpha)", "number", default=0.05, minimum=0.0001, maximum=0.5),
+                  Param("beta", "Consumer's risk (beta)", "number", default=0.10, minimum=0.0001, maximum=0.5),
+                  Param("sigma", "Historical standard deviation (0 = unknown)", "number", default=0.0, minimum=0.0),
+                  Param("column", "Measurements of a lot to accept or reject", "column", optional=True), LSL, USL])
+def acceptance_by_variables(ws, aql=1.0, rql=5.0, alpha=0.05, beta=0.10, sigma=0.0, column=None, lsl="", usl=""):
+    known = sigma > 0
+    n, k = variables_plan(aql / 100, rql / 100, alpha, beta, known)
+    res = Result("Acceptance Sampling by Variables")
+    res.table(pd.DataFrame([{"Sample size": n, "Critical distance (k)": k}]), title="Generated plan", index=False)
+    res.text(tr("Accept the lot if (mean - lower spec) / StDev and (upper spec - mean) / StDev are at least k."))
+    levels = np.array([aql, rql]) / 100
+    accept = variables_acceptance(levels, n, k, known)
+    res.table(pd.DataFrame({"Probability of accepting": accept, "Probability of rejecting": 1 - accept},
+                           index=pd.Index([f"AQL {aql:g}%", f"RQL {rql:g}%"], name="Percent defective")))
+    grid = np.linspace(1e-6, min(0.999, 2.5 * rql / 100), 200)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    ax.plot(100 * grid, variables_acceptance(grid, n, k, known), color=BLUE)
+    ax.plot([aql, rql], accept, "o", color=RED)
+    ax.set_xlabel(tr("Lot percent defective")), ax.set_ylabel(tr("Probability of acceptance"))
+    ax.set_title(f"{tr('Operating Characteristic (OC) Curve')}  (n = {n}, k = {k:.4g})")
+    res.figure(fig)
+    if column:
+        low, high = spec_limits(lsl, usl)
+        x = clean(ws.df[column])
+        if len(x) < 2:
+            raise ValueError("At least two observations are needed")
+        mean, sd = float(x.mean()), sigma if known else float(x.std(ddof=1))
+        distances = {name: value for name, value in (("Z.LSL", (mean - low) / sd if low is not None else None),
+                                                     ("Z.USL", (high - mean) / sd if high is not None else None))
+                     if value is not None}
+        res.table(pd.DataFrame([{"N": len(x), "Mean": mean, "StDev": sd, **distances}]),
+                  title=f"{tr('Lot')}: {column}", index=False)
+        ok = min(distances.values()) >= k
+        res.text(f"{tr('Decision')}: {tr('accept the lot') if ok else tr('reject the lot')}"
+                 + (f"    ({tr('the plan asks for')} {n} {tr('measurements')})" if len(x) < n else ""))
+    return res
+
+
+# ----- multi-vari and symmetry -----
+
+@analysis("quality.multi_vari", menu=MENU, title="Multi-Vari Chart",
+          params=[Param("response", "Response", "column"),
+                  Param("factor1", "Factor 1 (points within a group)", "column", numeric=False),
+                  Param("factor2", "Factor 2 (groups)", "column", numeric=False, optional=True),
+                  Param("factor3", "Factor 3 (panels)", "column", numeric=False, optional=True)])
+def multi_vari(ws, response, factor1, factor2=None, factor3=None):
+    factors = [f for f in (factor1, factor2, factor3) if f]
+    if len(set(factors)) != len(factors):
+        raise ValueError("Select a different column for each factor")
+    frame = ws.df[[response] + factors].dropna()
+    labels = {f: frame[f].map(format_value) for f in factors}
+    y = frame[response].astype(float)
+    panels = sorted(labels[factor3].unique()) if factor3 else [None]
+    outer = sorted(labels[factor2].unique()) if factor2 else [None]
+    inner = sorted(labels[factor1].unique())
+    fig = new_figure(max(6.0, 0.5 * len(inner) * len(outer) * len(panels) + 2), 4.2)
+    axes = fig.subplots(1, len(panels), sharey=True, squeeze=False)[0]
+    step = len(inner) + 1
+    for ax, panel in zip(axes, panels):
+        in_panel = labels[factor3] == panel if factor3 else pd.Series(True, index=frame.index)
+        group_means = []
+        for g, group in enumerate(outer):
+            in_group = in_panel & (labels[factor2] == group if factor2 else True)
+            positions = g * step + np.arange(len(inner))
+            means = [y[in_group & (labels[factor1] == level)].mean() for level in inner]
+            ax.plot(positions, means, "-o", color=BLUE, markersize=5)   # the means of factor 1 inside the group
+            group_means.append(y[in_group].mean())
+        centers = np.arange(len(outer)) * step + (len(inner) - 1) / 2
+        if factor2:
+            ax.plot(centers, group_means, "--s", color=RED, markersize=6)
+        ticks = [g * step + i for g in range(len(outer)) for i in range(len(inner))]
+        ax.set_xticks(ticks, inner * len(outer), fontsize=7)
+        if factor2:
+            for center, group in zip(centers, outer):
+                ax.annotate(group, (center, -0.14), xycoords=("data", "axes fraction"), ha="center", fontsize=8)
+        if factor3:
+            ax.set_title(f"{factor3} = {panel}", fontsize=9)
+    axes[0].set_ylabel(response)
+    fig.suptitle(f"{tr('Multi-Vari Chart')}: {response} {tr('by')} {', '.join(factors)}")
+    table = y.groupby([labels[f] for f in reversed(factors)]).agg(["count", "mean", "std"])
+    table.columns = ["N", "Mean", "StDev"]
+    table.index = [", ".join(map(str, i)) if isinstance(i, tuple) else i for i in table.index]
+    table.index.name = ", ".join(reversed(factors))
+    return Result("Multi-Vari Chart").figure(fig).table(table)
+
+
+def symmetry_points(values) -> tuple[np.ndarray, np.ndarray]:
+    """Distances below and above the median of the i-th smallest and i-th largest observations."""
+    x = np.sort(clean(values))
+    if len(x) < 4:
+        raise ValueError("At least four observations are needed")
+    median, half = np.median(x), len(x) // 2
+    return median - x[:half], x[::-1][:half] - median
+
+
+@analysis("quality.symmetry", menu=MENU, title="Symmetry Plot", params=[Param("columns", "Variables", "columns")])
+def symmetry_plot(ws, columns):
+    fig = new_figure(max(5.0, 4.0 * len(columns)), 4.0)
+    axes = fig.subplots(1, len(columns), squeeze=False)[0]
+    rows = {}
+    for ax, name in zip(axes, columns):
+        below, above = symmetry_points(ws.df[name])
+        limit = max(below.max(), above.max())
+        ax.plot(below, above, "o", color=BLUE, markersize=4)
+        ax.plot([0, limit], [0, limit], color=RED, linewidth=1)
+        ax.set_xlabel(tr("Distance below the median")), ax.set_ylabel(tr("Distance above the median"))
+        ax.set_title(name, fontsize=9)
+        x = clean(ws.df[name])
+        rows[name] = {"N": len(x), "Median": float(np.median(x)), "Skewness": float(sps.skew(x, bias=False)),
+                      "Points above the line (%)": 100 * float((above > below).mean())}
+    table = pd.DataFrame.from_dict(rows, orient="index")
+    table.index.name = "Variable"
+    res = Result("Symmetry Plot").figure(fig)
+    res.text(tr("Points above the line show a longer upper tail; points below it, a longer lower tail."))
+    return res.table(table)

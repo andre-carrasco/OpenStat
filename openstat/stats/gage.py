@@ -11,7 +11,7 @@ from openstat.core.worksheet import format_value
 from openstat.graphs import new_figure
 from openstat.i18n import tr
 from openstat.stats._tests import CONFIDENCE
-from openstat.stats.anova import nested_anova
+from openstat.stats.anova import balanced_anova_table, nested_anova
 from openstat.stats.basic import clopper_pearson
 from openstat.stats.quality import MENU as QUALITY_MENU
 from openstat.stats.quality import optional_number
@@ -186,6 +186,184 @@ def gage_nested(ws, part, operator, measurement, tolerance="", multiplier=6.0):
     comps = table["Variance component"].to_numpy()
     components = {"repeatability": comps[2], "operator": comps[0], "interaction": 0.0, "part": comps[1]}
     return _gage_report(res, frame, components, multiplier, tolerance, measurement, False)
+
+
+@analysis("gage.expanded", menu=MENU, title="Gage R&R Study (Expanded)",
+          params=[PART, OPERATOR, MEASUREMENT,
+                  Param("extra", "Additional factors (e.g. gage, fixture)", "columns", numeric=False),
+                  TOLERANCE, MULTIPLIER])
+def gage_expanded(ws, part, operator, measurement, extra, tolerance="", multiplier=6.0):
+    factors = list(dict.fromkeys([part, operator] + list(extra)))
+    if len(factors) < 3:
+        raise ValueError("Select at least one additional factor that is not the part or the operator")
+    frame = ws.df[factors + [measurement]].dropna()
+    anova = balanced_anova_table(frame, measurement, factors, random=factors)
+    res = Result("Gage R&R Study (Expanded)")
+    res.text(f"{tr('All factors are random and crossed.')}    {tr('Factors')}: {', '.join(factors)}")
+    res.table(anova, title="Analysis of Variance")
+    components = anova["Variance component"].drop("Total")
+    part_var, repeat = float(components[part]), float(components["Error"])
+    others = components.drop([part, "Error"])   # the operator, the additional factors and every interaction
+    grr = repeat + float(others.sum())
+    total = grr + part_var
+    rows = [("Total Gage R&R", grr), ("  Repeatability", repeat), ("  Reproducibility", float(others.sum()))]
+    rows += [(f"    {name}", float(value)) for name, value in others.items()]
+    rows += [("Part-To-Part", part_var), ("Total Variation", total)]
+    table = pd.DataFrame({"VarComp": [v for _, v in rows]},
+                         index=pd.Index([n.replace(n.strip(), tr(n.strip())) for n, _ in rows], name="Source"))
+    table["% Contribution"] = 100 * table["VarComp"] / total if total > 0 else np.nan
+    table["StdDev"] = np.sqrt(table["VarComp"])
+    table["Study Var"] = multiplier * table["StdDev"]
+    table["% Study Var"] = 100 * table["StdDev"] / np.sqrt(total) if total > 0 else np.nan
+    limit = optional_number(tolerance)
+    if limit:
+        table["% Tolerance"] = 100 * table["Study Var"] / limit
+    res.table(table[["VarComp", "% Contribution"]], title="Variance Components")
+    res.table(table.drop(columns=["VarComp", "% Contribution"]), title="Gage Evaluation")
+    ndc = int(max(1, np.floor(1.41 * np.sqrt(part_var / grr)))) if grr > 0 else 0
+    return res.text(f"{tr('Number of distinct categories')} = {ndc}")
+
+
+@analysis("gage.run_chart", menu=MENU, title="Gage Run Chart", params=[PART, OPERATOR, MEASUREMENT])
+def gage_run_chart(ws, part, operator, measurement):
+    frame = _frame(ws, part, operator, measurement)
+    parts, operators = sorted(frame["part"].unique()), sorted(frame["operator"].unique())
+    columns = min(5, len(parts))
+    rows = int(np.ceil(len(parts) / columns))
+    fig = new_figure(2.2 * columns + 1.0, 2.4 * rows + 0.8)
+    axes = fig.subplots(rows, columns, sharey=True, squeeze=False).ravel()
+    for ax, name in zip(axes, parts):
+        start = 0
+        for i, oper in enumerate(operators):   # each operator's trials on this part, in the order they were made
+            y = frame["y"][(frame["part"] == name) & (frame["operator"] == oper)].to_numpy()
+            ax.plot(start + np.arange(len(y)), y, "-o", color=PALETTE[i % len(PALETTE)], markersize=4,
+                    label=oper if name == parts[0] else None)
+            start += len(y) + 0.5
+        ax.axhline(frame["y"].mean(), color=GRAY, linestyle="--", linewidth=0.8)
+        ax.set_title(f"{part} {name}", fontsize=8), ax.set_xticks([])
+    for ax in axes[len(parts):]:
+        ax.set_axis_off()
+    fig.legend(title=operator, fontsize=7, loc="outside right upper")
+    fig.suptitle(f"{tr('Gage Run Chart')}: {measurement}")
+    res = Result("Gage Run Chart").figure(fig)
+    res.text(f"{tr('Parts')}: {len(parts)}    {tr('Operators')}: {len(operators)}    "
+             f"{tr('Mean')} = {frame['y'].mean():.5g}  ({tr('dashed line')})")
+    return res
+
+
+@analysis("gage.create_worksheet", menu=MENU, title="Create Gage R&R Study Worksheet",
+          params=[Param("parts", "Number of parts", "int", default=10, minimum=2, maximum=1000),
+                  Param("operators", "Number of operators", "int", default=3, minimum=1, maximum=100),
+                  Param("replicates", "Number of replicates", "int", default=2, minimum=1, maximum=100),
+                  Param("randomize", "Randomize the runs within each replicate", "bool", default=True),
+                  Param("seed", "Base for random numbers (0 = random)", "int", default=0, minimum=0)])
+def create_gage_worksheet(ws, parts=10, operators=3, replicates=2, randomize=True, seed=0):
+    rng = np.random.default_rng(seed or None)
+    rows = []
+    for _ in range(replicates):
+        block = [(p + 1, o + 1) for o in range(operators) for p in range(parts)]
+        rows += [block[i] for i in rng.permutation(len(block))] if randomize else block
+    frame = pd.DataFrame(rows, columns=["Parts", "Operators"], dtype=float)
+    frame.insert(0, "RunOrder", np.arange(1, len(frame) + 1, dtype=float))
+    frame["Measurement"] = np.nan
+    res = Result("Create Gage R&R Study Worksheet")
+    res.table(pd.DataFrame([{"Parts": parts, "Operators": operators, "Replicates": replicates,
+                             "Total runs": len(frame)}]), index=False, digits=0)
+    res.text(tr("Enter the measurements in the Measurement column, in run order."))
+    res.worksheet(tr("Gage R&R Study"), frame)
+    return res
+
+
+AIAG_TRIALS = 20   # the constants 1.08 and 31.3 of the AIAG method are for this number of trials
+
+
+def attribute_gage(reference, acceptances, trials: int, limit: float) -> dict:
+    """Bias and repeatability of an attribute gage by the AIAG analytic method.
+
+    The share of acceptances of each reference part, moved half a count towards 0.5, is put on a
+    normal probability scale and a line is fitted through the parts that were neither always
+    accepted nor always rejected.
+    """
+    ref, acc = np.asarray(reference, dtype=float), np.asarray(acceptances, dtype=float)
+    if (acc < 0).any() or (acc > trials).any():
+        raise ValueError("Acceptances must be between 0 and the number of trials")
+    used = (acc > 0) & (acc < trials)
+    if used.sum() < 2 or len(np.unique(ref[used])) < 2:
+        raise ValueError("At least two parts with both acceptances and rejections are needed")
+    share = acc[used] / trials
+    adjusted = np.where(share < 0.5, (acc[used] + 0.5) / trials, np.where(share > 0.5, (acc[used] - 0.5) / trials, 0.5))
+    fit = sps.linregress(ref[used], sps.norm.ppf(adjusted))
+
+    def at(probability):   # the reference value accepted with this probability
+        return (sps.norm.ppf(probability) - fit.intercept) / fit.slope
+    bias = limit - at(0.5)
+    repeatability = abs(at(0.995) - at(0.005)) / 1.08
+    t = 31.3 * abs(bias) / repeatability
+    return {"intercept": fit.intercept, "slope": fit.slope, "r2": fit.rvalue ** 2, "bias": float(bias),
+            "repeatability": float(repeatability), "t": float(t), "p": float(2 * sps.t.sf(t, AIAG_TRIALS - 1)),
+            "used": used}
+
+
+@analysis("gage.attribute_gage", menu=MENU, title="Attribute Gage Study (Analytic Method)",
+          params=[Param("reference", "Reference values", "column"),
+                  Param("acceptances", "Number of acceptances", "column"),
+                  Param("trials", "Number of trials for each part", "int", default=AIAG_TRIALS, minimum=2, maximum=1000),
+                  Param("limit", "Tolerance limit (lower or upper)", "number", default=0.0)])
+def attribute_gage_study(ws, reference, acceptances, trials=AIAG_TRIALS, limit=0.0):
+    frame = ws.df[[reference, acceptances]].dropna().astype(float)
+    out = attribute_gage(frame[reference], frame[acceptances], trials, limit)
+    res = Result("Attribute Gage Study (Analytic Method)")
+    res.text(f"{tr('Tolerance limit')} = {limit:g}    {tr('Trials')}: {trials}    "
+             f"{tr('Parts used in the fit')}: {int(out['used'].sum())} / {len(frame)}")
+    res.table(pd.DataFrame([{"Intercept": out["intercept"], "Slope": out["slope"], "R-sq": 100 * out["r2"]}]),
+              title="Fitted line on the normal probability scale", index=False)
+    res.table(pd.DataFrame([{"Bias": out["bias"], "Repeatability": out["repeatability"], "T-Value": out["t"],
+                             "DF": AIAG_TRIALS - 1, "P-Value": out["p"]}]), title="Bias and repeatability",
+              index=False)
+    if trials != AIAG_TRIALS:
+        res.text(tr("The repeatability adjustment and the test of the bias follow the AIAG method, "
+                    "which is defined for 20 trials."))
+    ref = frame[reference].to_numpy()
+    grid = np.linspace(ref.min(), ref.max(), 200)
+    fig = new_figure()
+    ax = fig.add_subplot()
+    ax.plot(ref, frame[acceptances].to_numpy() / trials, "o", color=BLUE, markersize=5)
+    ax.plot(grid, sps.norm.cdf(out["intercept"] + out["slope"] * grid), color=RED)
+    ax.axvline(limit, color=GRAY, linestyle="--", linewidth=1)
+    ax.set_xlabel(reference), ax.set_ylabel(tr("Probability of acceptance"))
+    ax.set_title(tr("Attribute Gage Study (Analytic Method)"))
+    return res.figure(fig)
+
+
+@analysis("gage.variability", menu=QUALITY_MENU, title="Variability Chart",
+          params=[Param("response", "Response", "column"),
+                  Param("factors", "Factors (outermost first, up to three)", "columns", numeric=False)])
+def variability_chart(ws, response, factors):
+    factors = list(dict.fromkeys(factors))
+    if not 1 <= len(factors) <= 3:
+        raise ValueError("Select one to three factors")
+    frame = ws.df[[response] + factors].dropna()
+    labels = [frame[f].map(format_value) for f in factors]
+    cells = frame[response].astype(float).groupby(labels, sort=True)
+    summary = cells.agg(["count", "mean", "std", "min", "max"])
+    names = [", ".join(i) if isinstance(i, tuple) else str(i) for i in summary.index]
+    position = np.arange(len(summary))
+    fig = new_figure(max(6.0, 0.45 * len(summary) + 2), 6.0)
+    top, bottom = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
+    for x, (_, values) in zip(position, cells):
+        top.plot(np.full(len(values), x), values, "o", color=GRAY, markersize=3)
+    top.vlines(position, summary["min"], summary["max"], color=BLUE, linewidth=1)
+    top.plot(position, summary["mean"], "_", color=RED, markersize=14, markeredgewidth=2)
+    top.axhline(frame[response].astype(float).mean(), color=GRAY, linestyle="--", linewidth=0.8)
+    top.set_ylabel(response)
+    bottom.plot(position, summary["std"], "-o", color=BLUE, markersize=4)
+    bottom.set_ylabel(tr("StDev"))
+    bottom.set_xticks(position, names, rotation=60 if len(summary) > 6 else 0, fontsize=7)
+    bottom.set_xlabel(", ".join(factors))
+    fig.suptitle(f"{tr('Variability Chart')}: {response}")
+    table = summary.rename(columns={"count": "N", "mean": "Mean", "std": "StDev", "min": "Minimum", "max": "Maximum"})
+    table.index = pd.Index(names, name=", ".join(factors))
+    return Result("Variability Chart").figure(fig).table(table)
 
 
 def type1_study(x, reference: float, tolerance: float, percent=20.0, multiplier=6.0) -> dict:

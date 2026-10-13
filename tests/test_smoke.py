@@ -39,6 +39,13 @@ OVERRIDES = {
     "quality.capability_nonnormal": {"lsl": "30", "usl": "60"},
     "quality.sixpack": {"lsl": "30", "usl": "60"},
     "gage.crossed": {"part": "Part", "operator": "Operator", "tolerance": "20"},
+    "gage.expanded": {"part": "Part", "operator": "Operator", "extra": ["Fixture"]},
+    "gage.run_chart": {"part": "Part", "operator": "Operator"},
+    "gage.attribute_gage": {"reference": "Dose", "acceptances": "Events", "limit": 4.0},
+    "gage.variability": {"factors": ["Group", "Pass"]},
+    "quality.capability_between_within": {"lsl": "30", "usl": "60"},
+    "quality.capability_multiple": {"lsl": "0", "usl": "80"},
+    "quality.multi_vari": {"factor1": "Pass", "factor2": "Group"},
     "gage.nested": {"part": "Part", "operator": "Operator"},
     "gage.attribute": {"rating": "Pass", "sample": "Part", "appraiser": "Operator"},
     # defective counts must not exceed the subgroup size

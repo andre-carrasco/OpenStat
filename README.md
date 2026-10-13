@@ -26,8 +26,8 @@ Requer Python 3.11 ou mais novo. O idioma segue o sistema (pt-BR ou inglês) e p
 | Regressão | linear com diagnósticos, predição com intervalos, estudo de estabilidade (prazo de validade), linha ajustada (inclusive binária), stepwise, melhores subconjuntos, não linear, logística binária/ordinal/nominal, Poisson, PLS, ortogonal |
 | ANOVA | um fator (Tukey, Fisher, Dunnett, Games-Howell, MCB de Hsu, Welch), análise de médias, ANOVA balanceada com fatores fixos e aleatórios, modelo linear geral, igualdade de variâncias, aninhada, efeitos mistos, MANOVA, efeitos principais e interação |
 | DOE | fatorial completo e fracionado, Plackett-Burman, fatorial geral, definitive screening, split-plot, composto central, Box-Behnken, seleção D-ótima, misturas (simplex e vértices extremos), Taguchi; análise (inclusive resposta binária), gráficos de contorno, superfície e contorno sobreposto, otimizador com meta por resposta, predição Taguchi, modificar experimento |
-| Cartas de controle | Xbarra-R, Xbarra-S, I-AM, P, NP, C, U, Laney, EWMA, CUSUM, média móvel, T², G, T, Box-Cox |
-| Ferramentas da qualidade | gráfico de sequência, Pareto, causa e efeito, identificação de distribuição, Johnson, capacidade (normal, não normal, binomial, Poisson, sixpack), Gage R&R, tolerância, amostragem de aceitação |
+| Cartas de controle | Xbarra-R, Xbarra-S, Xbarra, R, S, I-AM, I-AM-R/S (entre/dentro), Z-AM, zonas, P, NP, C, U, Laney, EWMA, CUSUM, média móvel, T², T²-variância generalizada, variância generalizada, EWMA multivariada, G, T, Box-Cox |
+| Ferramentas da qualidade | gráfico de sequência, Pareto, causa e efeito, identificação de distribuição, Johnson, gráfico de simetria, multi-vari, gráfico de variabilidade, capacidade (normal, entre/dentro, múltiplas variáveis, não normal, binomial, Poisson, sixpack), Gage R&R (cruzado, aninhado, expandido), gráfico de corridas de medição, planilha de estudo de Gage R&R, estudo de medição por atributos (método analítico), intervalos de tolerância (normal, lognormal, unilaterais, não paramétricos), amostragem de aceitação por atributos e por variáveis |
 | Confiabilidade | análise paramétrica com censura à direita e arbitrária, Kaplan-Meier, regressão com dados de vida, regressão de Cox, teste de vida acelerado, probit, curva de crescimento, plano de demonstração |
 | Multivariada | componentes principais, análise fatorial, itens, clusters, discriminante, correspondência |
 | Séries temporais | tendência, decomposição, média móvel, suavização exponencial, Winters, ACF, PACF, CCF, ARIMA |
@@ -48,8 +48,8 @@ como `aaaa-mm-dd` ou `dd/mm/aaaa` (`mm/dd/aaaa` em inglês), com hora opcional. 
 
 ### Ainda não incluído
 
-- Razões de Dixon além de r10, análise de médias para dados binomiais e de Poisson, análise de garantia
-  e Gage R&R expandido.
+- Razões de Dixon além de r10, análise de médias para dados binomiais e de Poisson, diagnóstico das
+  cartas P e U, Gage R&R expandido desbalanceado ou com fatores fixos, análise de garantia.
 - Leitura de arquivos de outros programas estatísticos.
 
 ## Linha de comando

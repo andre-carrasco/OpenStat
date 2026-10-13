@@ -36,6 +36,8 @@ def sample_ws() -> Worksheet:
         "Dose": 1.0 + np.arange(n) % 8, "Trials": np.full(n, 20.0),
         "Events": np.minimum(20.0, np.round(2.5 * (np.arange(n) % 8) + (np.arange(n) % 3))),
         "Date": pd.date_range("2024-01-01", periods=n, freq="D"),
+        # crossed with Part and Operator, two replicates of each combination
+        "Fixture": np.array([f"f{(i // 10) % 2}" for i in range(n)], dtype=object),
     }))
 
 
