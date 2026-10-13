@@ -5,6 +5,12 @@ Aplicativo desktop de análise estatística, de código aberto (MIT), escrito em
 É uma implementação independente: os cálculos usam métodos estatísticos públicos e as bibliotecas
 NumPy, SciPy, statsmodels, scikit-learn, lifelines, pyDOE3 e matplotlib.
 
+## Baixar
+
+Para Windows, sem instalar Python: baixe o [OpenStat-0.2.0-windows.zip](https://github.com/andre-carrasco/OpenStat/releases/download/v0.2.0/OpenStat-0.2.0-windows.zip)
+(todas as versões em [Releases](https://github.com/andre-carrasco/OpenStat/releases)), extraia e abra `OpenStat.exe`.
+O executável não é assinado, então o Windows pode pedir confirmação na primeira execução.
+
 ## Executar
 
 ```
