@@ -65,6 +65,8 @@ OVERRIDES = {
     "rel.probit": {"events": "Events", "trials": "Trials", "stress": "Dose"},
     "mv.cluster_var": {"columns": ["Y", "X", "Z"]},
     "mv.multiple_correspondence": {"columns": ["Group", "Pass"]},
+    "pred.compare": {"response": "Y", "continuous": ["X", "Z"], "trees": 20, "folds": 3},
+    "pred.key_predictors": {"response": "Y", "continuous": ["X", "Z"], "trees": 20, "folds": 3},
     # fewer trees keep the smoke tests quick
     "pred.forest_class": {"trees": 30, "folds": 3},
     "pred.forest_reg": {"trees": 30, "folds": 3},

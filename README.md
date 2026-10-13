@@ -35,8 +35,8 @@ Requer Python 3.11 ou mais novo. O idioma segue o sistema (pt-BR ou inglês) e p
 | Não paramétricos | sinais, Wilcoxon, Mann-Whitney, Kruskal-Wallis, Mood, Friedman, corridas, médias, diferenças e inclinações pareadas |
 | Equivalência | 1 amostra, 2 amostras, pareado, crossover 2x2 |
 | Poder e tamanho de amostra | testes Z e t, proporções, taxas de Poisson, variâncias, ANOVA, fatorial de 2 níveis, Plackett-Burman, fatorial completo geral, equivalência (inclusive crossover 2x2), estimação, tolerância |
-| Análise preditiva | CART, random forest e gradient boosting (classificação e regressão) |
-| Gráfico | 21 tipos, de histograma a superfície 3D |
+| Análise preditiva | CART, random forest e gradient boosting (classificação e regressão), regressão MARS, validação cruzada e conjunto de teste, comparação automática de modelos, descoberta de preditores-chave |
+| Gráfico | 24 tipos, de histograma a superfície 3D, incluindo dispersão por faixas, coordenadas paralelas e distribuição de probabilidade |
 
 Projetos são salvos em `.ostat` (um zip com as planilhas em Parquet e a saída em HTML). Dados entram
 por CSV, TXT ou Excel, ou colados da área de transferência. A saída pode ser exportada em HTML, PDF
