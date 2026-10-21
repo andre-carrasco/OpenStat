@@ -1841,5 +1841,17 @@
   "Before": "Antes de",
   "After": "Depois de",
   "Standard": "Padrão",
-  "Move to": "Mover para"
+  "Move to": "Mover para",
+  "Find...": "Localizar...",
+  "Replace...": "Substituir...",
+  "Find what": "Localizar",
+  "Replace with": "Substituir por",
+  "Match case": "Diferenciar maiúsculas",
+  "Match entire cell": "Célula inteira",
+  "Selected columns only": "Somente colunas selecionadas",
+  "Find Next": "Localizar próxima",
+  "Replace": "Substituir",
+  "Replace All": "Substituir tudo",
+  "{n} cells replaced": "{n} células substituídas",
+  "Not found": "Não encontrado"
 }

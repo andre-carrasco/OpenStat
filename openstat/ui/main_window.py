@@ -20,6 +20,7 @@ from openstat.i18n import language, tr
 from openstat.ui.assistant_dialog import AssistantDialog, GraphBuilderDialog
 from openstat.ui.console import Console
 from openstat.ui.dialog_builder import AnalysisDialog
+from openstat.ui.find_dialog import FindDialog
 from openstat.ui.output_view import OutputView
 from openstat.ui.worksheet_view import WorksheetView
 
@@ -163,6 +164,9 @@ class MainWindow(QMainWindow):
         grid("Clear Cells", "clear_selection")
         grid("Select All", "selectAll", QKeySequence.SelectAll)
         edit_menu.addSeparator()
+        find = self._action(edit_menu, "Find...", lambda: self.open_find(False), QKeySequence.Find)
+        replace = self._action(edit_menu, "Replace...", lambda: self.open_find(True), QKeySequence("Ctrl+H"))
+        edit_menu.addSeparator()
         inserts = [grid("Insert Cells", "insert_cells"), grid("Insert Rows", "insert_rows"),
                    grid("Insert Columns", "insert_columns")]
         move = grid("Move Columns", "move_columns")
@@ -174,6 +178,7 @@ class MainWindow(QMainWindow):
         icons = [(open_action, QStyle.SP_DialogOpenButton), (save_action, QStyle.SP_DialogSaveButton), None,
                  (cut, QStyle.SP_FileIcon), (copy, QStyle.SP_FileLinkIcon), (paste, QStyle.SP_DialogApplyButton), None,
                  (undo, QStyle.SP_ArrowBack), (redo, QStyle.SP_ArrowForward), None,
+                 (find, QStyle.SP_FileDialogContentsView), (replace, QStyle.SP_BrowserReload), None,
                  (inserts[0], QStyle.SP_FileDialogNewFolder), (inserts[1], QStyle.SP_ArrowDown),
                  (inserts[2], QStyle.SP_ArrowRight), (move, QStyle.SP_FileDialogDetailedView)]
         for entry in icons:
@@ -442,6 +447,14 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "OpenStat", tr("The language will change the next time OpenStat starts."))
 
     # ----- analyses -----
+
+    def open_find(self, replace: bool) -> None:
+        if getattr(self, "_find_dialog", None) is None:
+            self._find_dialog = FindDialog(self)
+        self._find_dialog.set_replace(replace)
+        self._find_dialog.show()
+        self._find_dialog.raise_()
+        self._find_dialog.activateWindow()
 
     def current_view(self) -> WorksheetView:
         return self.tabs.currentWidget()

@@ -171,3 +171,29 @@ def test_select_all_delete_clears_everything_without_error(window):
     view = window.current_view(); view.selectAll(); view.delete_selection()
     assert view.ws.ncols == 0 and view.undo_stack.count() == 1
     view.undo_stack.undo(); assert view.ws.column_names() == ["A", "B"] and view.ws.nrows == 4
+
+
+def test_find_next_wraps_and_respects_options():
+    from openstat.ui.find_dialog import find_next
+
+    ws = Worksheet("W", pd.DataFrame({"A": ["ab", "x", "AB"], "B": ["b", "ab", "c"]}))
+    assert find_next(ws, "ab", (0, 0), False, False, None) == (1, 1)
+    assert find_next(ws, "ab", (1, 1), True, False, None) == (0, 0)          # wraps; "AB" skipped by case
+    assert find_next(ws, "a", (0, 0), False, True, None) is None              # whole cell
+    assert find_next(ws, "ab", (0, 0), False, False, [0]) == (2, 0)
+
+
+def test_replace_all_is_one_step(window):
+    from openstat.ui.find_dialog import FindDialog
+
+    dialog = FindDialog(window, replace=True); dialog.find_text.setText("2"); dialog.replace_text.setText("5")
+    dialog.whole_cell.setChecked(True); dialog.replace_all()
+    ws = window.current_worksheet(); assert ws.df["A"][1] == 5.0 and window.current_view().undo_stack.count() == 1
+
+
+def test_find_replace_actions_and_dialog_reuse(window):
+    window.open_find(False); first = window._find_dialog
+    window.open_find(False)
+    assert window._find_dialog is first
+    dialog = window._find_dialog; dialog.find_text.setText("3"); dialog.find_next()
+    assert window.current_view().currentIndex().row() == 2
