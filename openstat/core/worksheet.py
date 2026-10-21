@@ -1,6 +1,7 @@
 """Worksheet: a table of named columns, each numeric, text or date/time, with missing values."""
 from __future__ import annotations
 
+import copy
 import math
 import re
 from datetime import datetime
@@ -96,6 +97,15 @@ def normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def changed_parts(before: dict, after: dict) -> tuple[dict, dict]:
+    """The two states with `data` cut down to the columns that differ."""
+    names = set(before["data"]) | set(after["data"])
+    keep = {c for c in names if (c not in before["data"] or c not in after["data"]
+                                 or not before["data"][c].equals(after["data"][c]))}
+    return ({**before, "data": {c: v for c, v in before["data"].items() if c in keep}},
+            {**after, "data": {c: v for c, v in after["data"].items() if c in keep}})
+
+
 class Worksheet:
     def __init__(self, name: str = "Worksheet 1", df: pd.DataFrame | None = None):
         self.name = name
@@ -103,6 +113,8 @@ class Worksheet:
         self.formulas: dict[str, str] = {}          # column name -> expression that fills it
         self.formula_errors: dict[str, str] = {}    # formulas that failed in the last recalculation
         self.formats: dict[str, list[dict]] = {}    # column name -> conditional formatting rules
+        self.descriptions: dict[str, str] = {}      # column name -> free-text description
+        self.value_orders: dict[str, str | list[str]] = {}   # column name -> "occurrence" or the user's level order
 
     @property
     def nrows(self) -> int:
@@ -167,6 +179,27 @@ class Worksheet:
         self.df = self.df.rename(columns={old: new_name})
         self.formulas = {new_name if k == old else k: v for k, v in self.formulas.items()}
         self.formats = {new_name if k == old else k: v for k, v in self.formats.items()}
+        self.descriptions = {new_name if k == old else k: v for k, v in self.descriptions.items()}
+        self.value_orders = {new_name if k == old else k: v for k, v in self.value_orders.items()}
+        self.recalculate()
+
+    def snapshot(self) -> dict:
+        """Copy of everything an edit can change, for undo."""
+        return {
+            "columns": self.column_names(), "nrows": self.nrows,
+            "data": {c: self.df[c].copy() for c in self.df.columns},
+            "formulas": copy.deepcopy(self.formulas), "formats": copy.deepcopy(self.formats),
+            "descriptions": copy.deepcopy(self.descriptions), "value_orders": copy.deepcopy(self.value_orders),
+        }
+
+    def restore(self, state: dict) -> None:
+        """Rebuild the worksheet from a snapshot; columns missing from state["data"] keep their current values."""
+        n = state["nrows"]
+        self.df = pd.DataFrame(
+            {c: (state["data"][c] if c in state["data"] else self.df[c]).to_numpy() for c in state["columns"]},
+            index=range(n))
+        for key in ("formulas", "formats", "descriptions", "value_orders"):
+            setattr(self, key, copy.deepcopy(state[key]))
         self.recalculate()
 
     def add_column(self, name: str, values) -> str:

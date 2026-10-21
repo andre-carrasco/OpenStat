@@ -42,6 +42,8 @@ class Project:
             "worksheets": [ws.name for ws in self.worksheets],
             "formulas": [ws.formulas for ws in self.worksheets],
             "formats": [ws.formats for ws in self.worksheets],
+            "descriptions": [ws.descriptions for ws in self.worksheets],
+            "value_orders": [ws.value_orders for ws in self.worksheets],
             "outputs": [o.title for o in self.outputs],
         }
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -64,11 +66,14 @@ class Project:
                 raise ValueError("Project file was created by a newer version of OpenStat")
             # formulas and formats are absent in files saved before they existed
             formulas, formats = manifest.get("formulas", []), manifest.get("formats", [])
+            descriptions, value_orders = manifest.get("descriptions", []), manifest.get("value_orders", [])
             for i, name in enumerate(manifest["worksheets"]):
                 df = pd.read_parquet(io.BytesIO(z.read(f"worksheets/{i}.parquet")))
                 ws = Worksheet(name, df)
                 ws.formulas = dict(formulas[i]) if i < len(formulas) else {}
                 ws.formats = dict(formats[i]) if i < len(formats) else {}
+                ws.descriptions = dict(descriptions[i]) if i < len(descriptions) else {}
+                ws.value_orders = dict(value_orders[i]) if i < len(value_orders) else {}
                 project.worksheets.append(ws)
             for i, title in enumerate(manifest["outputs"]):
                 project.outputs.append(OutputItem(title, z.read(f"outputs/{i}.html").decode("utf-8")))
