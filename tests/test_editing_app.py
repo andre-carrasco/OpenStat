@@ -197,3 +197,37 @@ def test_find_replace_actions_and_dialog_reuse(window):
     assert window._find_dialog is first
     dialog = window._find_dialog; dialog.find_text.setText("3"); dialog.find_next()
     assert window.current_view().currentIndex().row() == 2
+
+
+def test_empty_search_does_nothing(window):
+    from openstat.ui.find_dialog import FindDialog
+
+    dialog = FindDialog(window, replace=True); dialog.replace_text.setText("x")
+    ws = window.current_worksheet(); before = ws.df.copy()
+    dialog.replace_all(); dialog.replace_one(); assert not dialog.find_next()
+    assert ws.df.equals(before) and window.current_view().undo_stack.count() == 0
+
+
+def test_find_next_without_current_cell_starts_at_origin(window):
+    from openstat.ui.find_dialog import FindDialog
+
+    view = window.current_view(); view.setCurrentIndex(view.model_.index(-1, -1))
+    dialog = FindDialog(window); dialog.find_text.setText("1")
+    assert dialog.find_next() and (view.currentIndex().row(), view.currentIndex().column()) == (0, 0)
+
+
+def test_selected_columns_only_with_no_selection_searches_all(window):
+    from openstat.ui.find_dialog import FindDialog
+
+    view = window.current_view(); view.clearSelection()
+    dialog = FindDialog(window); dialog.find_text.setText("9"); dialog.selected_only.setChecked(True)
+    assert dialog.find_next()
+
+
+def test_replace_treats_search_literally(window):
+    from openstat.ui.find_dialog import FindDialog
+
+    ws = window.current_worksheet(); ws.set_cell(0, 0, "1.5"); ws.set_cell(1, 0, "125")
+    dialog = FindDialog(window, replace=True); dialog.find_text.setText("1.5"); dialog.replace_text.setText("7")
+    dialog.replace_all()
+    assert ws.get_text(0, 0) == "7" and ws.get_text(1, 0) == "125"

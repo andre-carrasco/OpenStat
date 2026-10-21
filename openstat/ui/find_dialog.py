@@ -68,15 +68,17 @@ class FindDialog(QDialog):
     def _columns(self, view) -> list[int] | None:
         if not self.selected_only.isChecked():
             return None
-        return sorted({i.column() for i in view.selectedIndexes()})
+        return sorted({i.column() for i in view.selectedIndexes()}) or None   # nothing selected: all columns
 
     def _options(self) -> tuple[bool, bool]:
         return self.match_case.isChecked(), self.whole_cell.isChecked()
 
     def find_next(self) -> bool:
+        if not self.find_text.text():
+            return False
         view = self.window_.current_view()
         current = view.currentIndex()
-        start = (current.row(), current.column()) if current.isValid() else (-1, -1)
+        start = (current.row(), current.column()) if current.isValid() else (0, -1)   # (0, -1): begin at (0, 0)
         found = find_next(view.ws, self.find_text.text(), start, *self._options(), self._columns(view))
         self.status.setText("" if found else tr("Not found"))
         if found:
@@ -90,6 +92,8 @@ class FindDialog(QDialog):
         return re.sub(re.escape(self.find_text.text()), lambda _m: self.replace_text.text(), cell, flags=flags)
 
     def replace_one(self) -> None:
+        if not self.find_text.text():
+            return
         view = self.window_.current_view()
         current = view.currentIndex()
         if current.isValid() and _matches(view.ws.get_text(current.row(), current.column()),
@@ -101,6 +105,8 @@ class FindDialog(QDialog):
         self.find_next()
 
     def replace_all(self) -> None:
+        if not self.find_text.text():
+            return
         view = self.window_.current_view()
         ws, columns = view.ws, self._columns(view)
         hits = [(r, c) for r in range(ws.nrows) for c in range(ws.ncols)
