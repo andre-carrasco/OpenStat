@@ -207,6 +207,8 @@ class Worksheet:
 
     def _push(self, shifts: dict[int, tuple[int, int]]) -> None:
         """Insert k blanks at row r in each column c of {c: (r, k)}, growing the sheet if needed."""
+        if not shifts:
+            return
         self.ensure_size(self.nrows + max(k for _, k in shifts.values()), 0)
         for c, (r, k) in shifts.items():
             name = self.df.columns[c]

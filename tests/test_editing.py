@@ -90,3 +90,7 @@ def test_insert_rows_beyond_the_end_of_the_data_still_inserts_count():
     ws = ws_ab(); ws.insert_rows(2, 2)
     assert ws.nrows == 5 and ws.df["A"].tolist()[:2] == [1.0, 2.0] and ws.df["A"].isna().tolist()[2:4] == [True, True] and ws.df["A"][4] == 3.0
     ws = ws_ab(); ws.insert_rows(0, 5); assert ws.nrows == 8
+
+def test_insert_rows_without_columns_is_a_no_op():
+    ws = ws_ab(); ws.delete_columns([0, 1]); ws.insert_rows(0, 1)
+    assert ws.ncols == 0
