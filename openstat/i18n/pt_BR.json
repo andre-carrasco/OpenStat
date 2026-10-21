@@ -1853,5 +1853,14 @@
   "Replace": "Substituir",
   "Replace All": "Substituir tudo",
   "{n} cells replaced": "{n} células substituídas",
-  "Not found": "Não encontrado"
+  "Not found": "Não encontrado",
+  "Column Properties": "Propriedades da coluna",
+  "Column Properties...": "Propriedades da coluna...",
+  "Description": "Descrição",
+  "Value Order": "Ordem dos valores",
+  "Alphabetical": "Alfabética",
+  "Order of occurrence": "Ordem de ocorrência",
+  "User-defined": "Definida pelo usuário",
+  "Move Up": "Subir",
+  "Move Down": "Descer"
 }

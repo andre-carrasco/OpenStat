@@ -5,8 +5,8 @@ from typing import Callable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QUndoStack
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QInputDialog, QLineEdit, QListWidget,
-                               QListWidgetItem, QMenu, QMessageBox, QTableView)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog, QLineEdit,
+                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QTableView, QVBoxLayout)
 
 from openstat.core.formatting import COLORS, RULES, column_colors, make_rule
 from openstat.core.worksheet import Worksheet, changed_parts
@@ -76,6 +76,65 @@ class MoveColumnsDialog(QDialog):
         return [i.text() for i in map(self.columns.item, range(self.columns.count())) if i.checkState() == Qt.Checked]
 
 
+class ColumnPropertiesDialog(QDialog):
+    """Edits a column's description and value order."""
+
+    def __init__(self, ws: Worksheet, name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{tr('Column Properties')}: {name}")
+        self.description = QLineEdit(ws.descriptions.get(name, ""))
+        self.order = QComboBox()
+        for key, label in (("alphabetical", "Alphabetical"), ("occurrence", "Order of occurrence"),
+                           ("user", "User-defined")):
+            self.order.addItem(tr(label), key)
+        current = ws.value_orders.get(name)
+        self.order.setCurrentIndex(2 if isinstance(current, list) else 1 if current == "occurrence" else 0)
+        self.levels_list = QListWidget()
+        self.levels_list.addItems(ws.levels(name))
+        up, down = QPushButton(tr("Move Up")), QPushButton(tr("Move Down"))
+        up.clicked.connect(lambda: self._move(-1))
+        down.clicked.connect(lambda: self._move(1))
+        self._buttons = (up, down)
+        self.order.setEnabled(not ws.is_numeric(name))
+        self.order.currentIndexChanged.connect(self._sync)
+        self._sync()
+        side = QVBoxLayout()
+        side.addWidget(up)
+        side.addWidget(down)
+        side.addStretch()
+        row = QHBoxLayout()
+        row.addWidget(self.levels_list)
+        row.addLayout(side)
+        form = QFormLayout(self)
+        form.addRow(tr("Description") + ":", self.description)
+        form.addRow(tr("Value Order") + ":", self.order)
+        form.addRow(row)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def _sync(self) -> None:
+        user = self.order.isEnabled() and self.order.currentData() == "user"
+        self.levels_list.setEnabled(user)
+        for button in self._buttons:
+            button.setEnabled(user)
+
+    def _move(self, step: int) -> None:
+        row = self.levels_list.currentRow()
+        if row >= 0 and 0 <= row + step < self.levels_list.count():
+            self.levels_list.insertItem(row + step, self.levels_list.takeItem(row))
+            self.levels_list.setCurrentRow(row + step)
+
+    def values(self) -> tuple[str, str | list[str] | None]:
+        kind = self.order.currentData() if self.order.isEnabled() else "alphabetical"
+        if kind == "user":
+            return self.description.text(), [self.levels_list.item(i).text() for i in range(self.levels_list.count())]
+        return self.description.text(), "occurrence" if kind == "occurrence" else None
+
+
 class WorksheetModel(QAbstractTableModel):
     def __init__(self, worksheet: Worksheet, change: Callable, parent=None):
         super().__init__(parent)
@@ -118,9 +177,11 @@ class WorksheetModel(QAbstractTableModel):
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.ToolTipRole and orientation == Qt.Horizontal and section < self.ws.ncols:
             name = self.ws.df.columns[section]
+            lines = [self.ws.descriptions[name]] if name in self.ws.descriptions else []
             if name in self.ws.formulas:
                 error = self.ws.formula_errors.get(name)
-                return f"= {self.ws.formulas[name]}" + (f"\n{tr(error)}" if error else "")
+                lines.append(f"= {self.ws.formulas[name]}" + (f"\n{tr(error)}" if error else ""))
+            return "\n".join(lines) or None
         if role != Qt.DisplayRole:
             return None
         if orientation == Qt.Vertical:
@@ -208,6 +269,7 @@ class WorksheetView(QTableView):
         menu.addAction(tr("Insert Columns"), self.insert_columns)
         menu.addAction(tr("Delete Columns"), self.delete_selection)
         menu.addAction(tr("Move Columns") + "...", self.move_columns)
+        menu.addAction(tr("Column Properties") + "...", lambda: self.column_properties(section))
         menu.addAction(tr("Conditional Formatting") + "...", lambda: self.add_format(name))
         clear = menu.addAction(tr("Clear Conditional Formatting"), lambda: self.set_formats(name, []))
         clear.setEnabled(name in self.ws.formats)
@@ -245,6 +307,23 @@ class WorksheetView(QTableView):
             except ValueError as exc:
                 QMessageBox.warning(self, tr("Error"), str(exc))
         self.refresh()
+
+    def column_properties(self, section: int) -> None:
+        if not 0 <= section < self.ws.ncols:
+            return
+        name = self.ws.df.columns[section]
+        dialog = ColumnPropertiesDialog(self.ws, name, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        description, order = dialog.values()
+
+        def apply():
+            for store, value in ((self.ws.descriptions, description), (self.ws.value_orders, order)):
+                if value:
+                    store[name] = value
+                else:
+                    store.pop(name, None)
+        self._apply("Column Properties", apply)
 
     def keyPressEvent(self, event):
         editing = self.state() == QTableView.EditingState

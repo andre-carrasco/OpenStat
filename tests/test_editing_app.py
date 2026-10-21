@@ -231,3 +231,34 @@ def test_replace_treats_search_literally(window):
     dialog = FindDialog(window, replace=True); dialog.find_text.setText("1.5"); dialog.replace_text.setText("7")
     dialog.replace_all()
     assert ws.get_text(0, 0) == "7" and ws.get_text(1, 0) == "125"
+
+
+def test_column_properties_apply_and_undo(window, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    from openstat.ui.worksheet_view import ColumnPropertiesDialog
+    view = window.current_view(); ws = view.ws; ws.set_cell(0, 2, "b"); ws.set_cell(1, 2, "a")
+    monkeypatch.setattr(ColumnPropertiesDialog, "exec", lambda self: QDialog.Accepted)
+    monkeypatch.setattr(ColumnPropertiesDialog, "values", lambda self: ("weight in kg", ["b", "a"]))
+    view.column_properties(2)
+    assert ws.descriptions == {"C3": "weight in kg"} and ws.levels("C3") == ["b", "a"]
+    assert view.model_.headerData(2, Qt.Horizontal, Qt.ToolTipRole).startswith("weight in kg")
+    view.undo_stack.undo(); assert ws.descriptions == {} and ws.value_orders == {}
+
+
+def test_order_disabled_for_numeric_column(qapp):
+    from openstat.ui.worksheet_view import ColumnPropertiesDialog
+    dialog = ColumnPropertiesDialog(Worksheet("W", pd.DataFrame({"A": [1.0]})), "A")
+    assert not dialog.order.isEnabled()
+
+
+def test_column_properties_dialog_modes(qapp):
+    from openstat.ui.worksheet_view import ColumnPropertiesDialog
+    ws = Worksheet("W", pd.DataFrame({"T": ["b", "a", "b"]}))
+    dialog = ColumnPropertiesDialog(ws, "T")
+    assert dialog.values() == ("", None) and not dialog.levels_list.isEnabled()
+    ws.value_orders["T"] = ["b", "a"]
+    dialog = ColumnPropertiesDialog(ws, "T")
+    assert dialog.order.currentData() == "user" and dialog.levels_list.isEnabled()
+    dialog.levels_list.setCurrentRow(1); dialog._move(-1)
+    assert dialog.values()[1] == ["a", "b"]
+    dialog.order.setCurrentIndex(1); assert dialog.values()[1] == "occurrence"

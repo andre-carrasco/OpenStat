@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
                    grid("Insert Columns", "insert_columns")]
         move = grid("Move Columns", "move_columns")
         move.setText(move.text() + "...")
+        edit_menu.addSeparator()
+        self._action(edit_menu, "Column Properties...", lambda: self.current_view().column_properties(
+            self.current_view().currentIndex().column()))
 
         toolbar = self.addToolBar(tr("Standard"))
         toolbar.setObjectName("Standard")
