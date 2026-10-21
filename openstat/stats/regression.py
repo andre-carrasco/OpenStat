@@ -15,7 +15,7 @@ from openstat.core.result import Result
 from openstat.core.worksheet import Worksheet, format_value, parse_cell
 from openstat.graphs import new_figure
 from openstat.i18n import tr
-from openstat.stats._design import CONSTANT, Design, build_design, complete_rows
+from openstat.stats._design import CONSTANT, Design, build_design, complete_rows, report_reference
 from openstat.stats._tests import CONFIDENCE
 from openstat.stats._util import median_ranks
 from openstat.stats.quality import LSL, USL, optional_number
@@ -133,6 +133,7 @@ def linear_report(res: Result, ws, response, design: Design, store=False, plots=
     y, fit = fit_ols(ws, response, design)
     if show_equation:
         res.heading("Regression Equation").text(equation(response, fit.params))
+    report_reference(res, design)
     res.table(coefficient_table(fit, design), title="Coefficients")
     res.table(pd.DataFrame([model_summary(fit)]), title="Model Summary", index=False)
     res.table(term_tests(fit, design), title="Analysis of Variance")
@@ -202,6 +203,7 @@ def design_rows(ws, design: Design, response, continuous, categorical, interacti
         new[name] = values
     used = [response] + continuous + categorical
     extended = Worksheet("points", pd.concat([ws.df[used].iloc[design.rows], pd.DataFrame(new)], ignore_index=True))
+    extended.value_orders = ws.value_orders   # same reference levels as the fitted model
     return build_design(extended, [response], continuous, categorical, interactions, coding).X.iloc[-len(points):]
 
 
@@ -236,7 +238,7 @@ def predict(ws, response, continuous=None, categorical=None, interactions=False,
 def binary_fitted_line(ws, response, predictor, confidence=95.0):
     design = build_design(ws, [response], [predictor])
     labels = ws.df[response].iloc[design.rows].map(format_value)
-    levels = sorted(labels.unique())
+    levels = ws.levels(response, labels)
     if len(levels) != 2:
         raise ValueError("The response must have exactly two distinct values")
     y = (labels == levels[-1]).astype(float).to_numpy()
@@ -323,6 +325,7 @@ def stability_study(ws, response, time, batch=None, lsl="", usl="", confidence=9
                  tr("Common slope and intercept (batches pooled)")][0 if interactions else 1 if categorical else 2]
         res.text(f"{tr('Model')}: {model}")
     res.heading("Regression Equation").text(equation(response, fit.params))
+    report_reference(res, design)
     res.table(coefficient_table(fit, design), title="Coefficients")
     res.table(pd.DataFrame([model_summary(fit)]), title="Model Summary", index=False)
 
@@ -651,13 +654,14 @@ def binary_logistic(ws, response, continuous=None, categorical=None, interaction
                     store=False):
     design = build_design(ws, [response], continuous, categorical, interactions)
     labels = ws.df[response].iloc[design.rows].map(format_value)
-    levels = sorted(labels.unique())
+    levels = ws.levels(response, labels)
     if len(levels) != 2:
         raise ValueError("The response must have exactly two distinct values")
     y = (labels == levels[-1]).astype(float).to_numpy()
     fit = sm.GLM(y, design.X, family=sm.families.Binomial()).fit()
     res = Result("Binary Logistic Regression")
     res.text(f"{tr('Event')}: {response} = {levels[-1]}    {tr('Events')}: {int(y.sum())}    N = {len(y)}")
+    report_reference(res, design)
     glm_report(res, fit, "Odds Ratio", confidence)
     chi2, df, p = hosmer_lemeshow(y, np.asarray(fit.fittedvalues))
     res.table(pd.DataFrame([{"DF": df, "Chi-Square": chi2, "P-Value": p}],
@@ -677,6 +681,7 @@ def poisson_regression(ws, response, continuous=None, categorical=None, interact
         raise ValueError("Counts must be non-negative")
     fit = sm.GLM(y, design.X, family=sm.families.Poisson()).fit()
     res = Result("Poisson Regression")
+    report_reference(res, design)
     glm_report(res, fit, "Rate Ratio", confidence)
     pearson = float(fit.pearson_chi2)
     res.table(pd.DataFrame({"DF": [fit.df_resid, fit.df_resid], "Chi-Square": [fit.deviance, pearson],
@@ -688,10 +693,12 @@ def poisson_regression(ws, response, continuous=None, categorical=None, interact
 
 def _category_codes(ws, response, rows):
     labels = ws.df[response].iloc[rows].map(format_value)
-    try:
-        levels = sorted(labels.unique(), key=float)
-    except ValueError:
-        levels = sorted(labels.unique())
+    levels = ws.levels(response, labels)
+    if response not in ws.value_orders:   # a text column of numbers keeps its numeric order
+        try:
+            levels = sorted(levels, key=float)
+        except ValueError:
+            pass
     if len(levels) < 3:
         raise ValueError("The response needs at least three distinct values")
     return labels.map({lv: i for i, lv in enumerate(levels)}).to_numpy(), levels
@@ -713,6 +720,7 @@ def ordinal_logistic(ws, response, continuous=None, categorical=None):
     g = 2 * (fit.llf - ll_null)
     res = Result("Ordinal Logistic Regression")
     res.text(f"{tr('Response order')}: {' < '.join(levels)}    N = {len(codes)}")
+    report_reference(res, design)
     coefs = pd.DataFrame({"Coef": fit.params[:k], "SE Coef": fit.bse[:k], "Z-Value": fit.tvalues[:k],
                           "P-Value": fit.pvalues[:k], "Odds Ratio": np.exp(fit.params[:k])})
     coefs.index.name = "Term"
@@ -733,6 +741,7 @@ def nominal_logistic(ws, response, continuous=None, categorical=None):
     fit = sm.MNLogit(codes, design.X).fit(disp=0, maxiter=200)
     res = Result("Nominal Logistic Regression")
     res.text(f"{tr('Reference category')}: {levels[0]}    N = {len(codes)}")
+    report_reference(res, design)
     params, bse = np.asarray(fit.params), np.asarray(fit.bse)
     z, p = np.asarray(fit.tvalues), np.asarray(fit.pvalues)
     for j, level in enumerate(levels[1:]):

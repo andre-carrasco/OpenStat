@@ -16,7 +16,7 @@ from openstat.core.result import Result
 from openstat.core.worksheet import format_value
 from openstat.graphs import new_figure
 from openstat.i18n import tr
-from openstat.stats._design import CONSTANT, build_design, complete_rows
+from openstat.stats._design import CONSTANT, build_design, complete_rows, report_reference
 from openstat.stats._tests import ALPHA, CONFIDENCE
 from openstat.stats.regression import PLOTS, STORE, linear_report, residual_plots
 
@@ -502,6 +502,7 @@ def fully_nested(ws, response, factor_a, factor_b, factor_c=None):
 def mixed_effects(ws, response, random, factors=None, covariates=None):
     factors = [f for f in (factors or []) if f != random]
     covariates = list(covariates or [])
+    design = None
     if factors or covariates:
         design = build_design(ws, [response], covariates, factors, extra_columns=[random])
         X, rows = design.X, design.rows
@@ -518,6 +519,8 @@ def mixed_effects(ws, response, random, factors=None, covariates=None):
     k = X.shape[1]
     res = Result("Mixed Effects Model")
     res.text(f"{tr('Random factor')}: {random} ({groups.nunique()} {tr('Levels')})    N = {len(y)}    REML")
+    if design:
+        report_reference(res, design)
     if not fit.converged:
         res.text(tr("Warning: the estimation did not converge; interpret the results with caution."))
     fixed = pd.DataFrame({"Coef": fit.params[:k], "SE Coef": fit.bse[:k], "Z-Value": fit.tvalues[:k],

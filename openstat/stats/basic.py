@@ -263,13 +263,13 @@ def paired_t(ws, sample1, sample2, delta0=0.0, confidence=95.0, alternative=NOT_
 # ----- proportions and rates -----
 
 def _events(ws, column, events, trials) -> tuple[int, int]:
-    """Events and trials from a two-level column (event = highest level) or from summarized counts."""
+    """Events and trials from a two-level column (event = last level in value order) or from summarized counts."""
     if column:
-        col = ws.df[column].dropna()
-        levels = sorted(col.unique())
+        labels = ws.df[column].dropna().map(format_value)
+        levels = ws.levels(column, labels)
         if len(levels) > 2:
             raise ValueError(f"{column}: the column must have two distinct values")
-        return int((col == levels[-1]).sum()), len(col)
+        return int((labels == levels[-1]).sum()), len(labels)
     if trials < 1 or not 0 <= events <= trials:
         raise ValueError("Events must be between 0 and the number of trials")
     return int(events), int(trials)
@@ -307,6 +307,8 @@ def one_proportion(ws, column=None, events=0, trials=0, p0=0.5, method="Exact", 
         row.update({"CI Lower": lo, "CI Upper": hi, "Z-Value": z, "P-Value": p_value(z, sps.norm(), alternative)})
     res = Result("1 Proportion")
     res.text(f"H0: p = {p0:g}    H1: p {_symbol(alternative)} {p0:g}    {tr(method)}    {confidence:g}% CI")
+    if column:
+        res.text(f"{tr('Event')}: {column} = {ws.levels(column, ws.df[column].dropna().map(format_value))[-1]}")
     return res.table(pd.DataFrame([row]), index=False, digits=6)
 
 

@@ -13,7 +13,7 @@ from openstat.core.worksheet import format_value
 from openstat.graphs import new_figure
 from openstat.i18n import tr
 from openstat.stats import _life
-from openstat.stats._design import CONSTANT, build_design
+from openstat.stats._design import CONSTANT, build_design, report_reference
 from openstat.stats._tests import CONFIDENCE
 
 MENU = ("Stat", "Reliability/Survival")
@@ -259,6 +259,7 @@ def life_regression(ws, time, censor=None, censor_value="0", continuous=None, ca
     res = Result("Regression with Life Data")
     res.text(f"{tr('Distribution')}: {tr(distribution)}    {tr('Failures')}: {int(failed.sum())}    "
              f"{tr('Censored')}: {int((~failed).sum())}")
+    report_reference(res, design)
     _life_regression(res, ws, time, failed, design, distribution, confidence)
     return res
 
@@ -293,6 +294,7 @@ def cox_regression(ws, time, censor=None, censor_value="0", continuous=None, cat
     res = Result("Cox Regression")
     res.text(f"{tr('Failures')}: {int(failed.sum())}    {tr('Censored')}: {int((~failed).sum())}    "
              f"{tr('Method for tied times')}: {ties}")
+    report_reference(res, design)
     res.table(pd.DataFrame({"Coef": params, "SE Coef": se, "Z-Value": params / se,
                             "P-Value": 2 * sps.norm.sf(np.abs(params / se)), "Hazard ratio": np.exp(params),
                             "CI Lower": np.exp(params - z * se), "CI Upper": np.exp(params + z * se)},

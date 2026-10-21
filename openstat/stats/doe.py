@@ -431,7 +431,7 @@ def lack_of_fit(fit, factor_frame: pd.DataFrame, y: np.ndarray) -> dict | None:
 
 # ----- two-level factorial analysis -----
 
-def code_two_level(series: pd.Series, name: str) -> np.ndarray:
+def code_two_level(series: pd.Series, name: str, ws=None) -> np.ndarray:
     """Code a two-level factor to -1/+1; numeric factors may also have center points at 0."""
     if pd.api.types.is_numeric_dtype(series):
         x = series.to_numpy(dtype=float)
@@ -443,7 +443,7 @@ def code_two_level(series: pd.Series, name: str) -> np.ndarray:
             raise ValueError(f"{name}: a two-level factor may only have a low level, a high level and center points")
         return np.round(coded, 10)
     labels = series.map(format_value)
-    levels = sorted(labels.unique())
+    levels = ws.levels(name, labels) if ws else sorted(labels.unique())
     if len(levels) != 2:
         raise ValueError(f"{name}: a text factor must have exactly two levels")
     return np.where(labels == levels[0], -1.0, 1.0)
@@ -517,7 +517,7 @@ def analyze_factorial(ws, response, factors, order=ORDERS[1], alpha=0.05):
         raise ValueError("Select at least one factor")
     frame = ws.df[[response] + factors].dropna()
     y = frame[response].to_numpy(dtype=float)
-    coded = pd.DataFrame({f: code_two_level(frame[f], f) for f in factors}, index=frame.index)
+    coded = pd.DataFrame({f: code_two_level(frame[f], f, ws) for f in factors}, index=frame.index)
     max_order = len(factors) if order == ORDERS[3] else ORDERS.index(order) + 1
     X, groups, dropped = factorial_matrix(coded, max_order)
     fit = sm.OLS(y, X).fit()
@@ -561,7 +561,7 @@ def analyze_binary_factorial(ws, events, trials, factors, order=ORDERS[1]):
     hits, n = frame[events].to_numpy(dtype=float), frame[trials].to_numpy(dtype=float)
     if (hits < 0).any() or (hits > n).any() or (n <= 0).any():
         raise ValueError("Events must be between 0 and the number of trials")
-    coded = pd.DataFrame({f: code_two_level(frame[f], f) for f in factors}, index=frame.index)
+    coded = pd.DataFrame({f: code_two_level(frame[f], f, ws) for f in factors}, index=frame.index)
     max_order = len(factors) if order == ORDERS[3] else ORDERS.index(order) + 1
     X, _, dropped = factorial_matrix(coded, max_order)
     if len(frame) <= X.shape[1]:

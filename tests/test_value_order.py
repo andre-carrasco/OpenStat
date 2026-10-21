@@ -3,7 +3,7 @@ import pandas as pd
 
 from openstat.core.worksheet import Worksheet
 from openstat.graphs import basic as graphs_basic
-from openstat.stats import anova, basic, calc, data, quality, tables
+from openstat.stats import anova, basic, calc, data, doe, multivariate, predictive, quality, regression, tables
 
 REVERSED = ["D", "C", "B", "A"]
 
@@ -71,3 +71,58 @@ def test_factorial_plots_and_multi_vari_follow_value_order(sample_ws):
     sample_ws.value_orders["Group"] = REVERSED
     table = tables_of(quality.multi_vari(sample_ws, "Y", "Group"))[0]
     assert list(table.index) == REVERSED
+
+
+def test_binary_logistic_event_follows_value_order(sample_ws):
+    sample_ws.value_orders["Pass"] = ["yes", "no"]
+    html = regression.binary_logistic(sample_ws, "Pass", continuous=["X"]).to_html()
+    assert "Pass = no" in html          # event is now the last level, "no"
+    fitted = regression.binary_fitted_line(sample_ws, "Pass", "X").to_html()
+    assert "Pass = no" in fitted
+
+
+def test_reference_level_follows_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = ["C", "A", "B", "D"]
+    res = regression.fit_regression(sample_ws, "Y", continuous=["X"], categorical=["Group"], plots=False)
+    assert "Group = C" in res.to_html()
+    coefs = next(t for t in tables_of(res) if "Coef" in t.columns)
+    assert "Group_C" not in coefs.index and "Group_A" in coefs.index   # C is the reference: no coefficient
+
+
+def test_default_reference_level_is_first_alphabetical(sample_ws):
+    html = regression.fit_regression(sample_ws, "Y", categorical=["Group"], plots=False).to_html()
+    assert "Group = A" in html
+
+
+def test_ordinal_response_follows_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = ["C", "A", "D", "B"]
+    _, levels = regression._category_codes(sample_ws, "Group", list(range(sample_ws.nrows)))
+    assert levels == ["C", "A", "D", "B"]
+
+
+def test_proportion_event_follows_value_order(sample_ws):
+    no = int((sample_ws.df["Pass"] == "no").sum())
+    sample_ws.value_orders["Pass"] = ["yes", "no"]
+    res = basic.one_proportion(sample_ws, column="Pass")
+    assert tables_of(res)[0]["X"].iloc[0] == no
+    assert "Pass = no" in res.to_html()
+
+
+def test_text_two_level_factor_follows_value_order():
+    ws = Worksheet("F", pd.DataFrame({"f": ["lo", "hi", "lo", "hi"]}))
+    assert list(doe.code_two_level(ws.df["f"], "f", ws)) == [1.0, -1.0, 1.0, -1.0]   # alphabetical: hi is low
+    ws.value_orders["f"] = ["lo", "hi"]
+    assert list(doe.code_two_level(ws.df["f"], "f", ws)) == [-1.0, 1.0, -1.0, 1.0]
+
+
+def test_multiple_correspondence_follows_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = REVERSED
+    res = multivariate.multiple_correspondence(sample_ws, ["Group", "Pass"])
+    categories = next(t for t in tables_of(res) if t.index.name == "Category")
+    assert list(categories.index)[:4] == [f"Group = {g}" for g in REVERSED]
+
+
+def test_indicator_predictors_follow_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = REVERSED
+    X, _ = predictive.predictor_matrix(sample_ws, "Y", [], ["Group"])
+    assert list(X.columns) == [f"Group = {g}" for g in REVERSED]

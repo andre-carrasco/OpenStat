@@ -36,7 +36,9 @@ def predictor_matrix(ws, response, continuous, categorical) -> tuple[pd.DataFram
     frame = ws.df.iloc[rows]
     parts = [frame[continuous].astype(float)] if continuous else []
     for name in categorical:
-        parts.append(pd.get_dummies(frame[name].map(format_value), prefix=name, prefix_sep=" = ").astype(float))
+        labels = frame[name].map(format_value)
+        labels = pd.Categorical(labels, categories=ws.levels(name, labels))
+        parts.append(pd.get_dummies(labels, prefix=name, prefix_sep=" = ").astype(float).set_axis(frame.index))
     return pd.concat(parts, axis=1), rows
 
 

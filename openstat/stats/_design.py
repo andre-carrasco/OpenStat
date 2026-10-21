@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from openstat.core.worksheet import format_value
+from openstat.i18n import tr
 
 CONSTANT = "Constant"
 
@@ -19,6 +20,7 @@ class Design:
     rows: np.ndarray                     # worksheet row positions used (complete cases)
     nrows: int                           # worksheet row count, for storing aligned columns
     levels: dict[str, list[str]] = field(default_factory=dict)
+    coding: str = "reference"
 
     def aligned(self, values) -> list:
         """Spread per-observation values back onto worksheet rows (missing elsewhere)."""
@@ -31,13 +33,15 @@ def complete_rows(ws, columns) -> np.ndarray:
     return np.flatnonzero(ws.df[list(columns)].notna().all(axis=1).to_numpy())
 
 
-def code_factor(labels: pd.Series, name: str, coding: str) -> tuple[pd.DataFrame, list[str]]:
+def code_factor(labels: pd.Series, name: str, coding: str, order: list[str] | None = None
+                ) -> tuple[pd.DataFrame, list[str]]:
     """Indicator columns for a factor.
 
     'reference' drops the first level (0/1 coding); 'effect' drops the last level and codes it -1,
     so that each term can be tested with the other terms held at their average level.
+    `order` is the level order (default: sorted).
     """
-    levels = sorted(labels.unique())
+    levels = list(order) if order is not None else sorted(labels.unique())
     if len(levels) < 2:
         raise ValueError(f"{name}: a factor needs at least two levels")
     if coding == "reference":
@@ -68,7 +72,8 @@ def build_design(ws, responses, continuous=(), categorical=(), interactions=Fals
     for name in continuous:
         blocks[name] = pd.DataFrame({name: frame[name].astype(float)})
     for name in categorical:
-        blocks[name], levels[name] = code_factor(frame[name].map(format_value), name, coding)
+        labels = frame[name].map(format_value)
+        blocks[name], levels[name] = code_factor(labels, name, coding, ws.levels(name, labels))
     for name, block in blocks.items():
         X = pd.concat([X, block], axis=1)
         terms.append((name, list(block.columns)))
@@ -80,4 +85,11 @@ def build_design(ws, responses, continuous=(), categorical=(), interactions=Fals
             terms.append((f"{a}*{b}", list(block.columns)))
     if len(rows) <= X.shape[1]:
         raise ValueError("Not enough observations to fit the model")
-    return Design(X, terms, rows, ws.nrows, levels)
+    return Design(X, terms, rows, ws.nrows, levels, coding)
+
+
+def report_reference(res, design: Design):
+    """One line per categorical factor naming its reference level (reference coding only)."""
+    if design.coding == "reference":
+        for name, levels in design.levels.items():
+            res.text(f"{tr('Reference level')}: {name} = {levels[0]}")

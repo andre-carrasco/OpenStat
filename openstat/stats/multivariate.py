@@ -394,6 +394,7 @@ def multiple_correspondence(ws, columns):
     if len(columns) < 2:
         raise ValueError("Select at least 2 columns")
     frame = ws.df[list(columns)].dropna().map(format_value)
+    frame = frame.apply(lambda col: pd.Categorical(col, categories=ws.levels(col.name, col)))
     indicator = pd.get_dummies(frame, prefix_sep=" = ").astype(float)
     if indicator.shape[1] - len(columns) < 2:
         raise ValueError("The variables need more categories for this analysis")
