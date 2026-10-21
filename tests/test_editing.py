@@ -85,3 +85,8 @@ def test_move_columns():
 def test_text_column_becomes_numeric_after_deleting_its_text():
     ws = Worksheet("W", pd.DataFrame({"A": ["a", "2", "3"]})); ws.delete_cells([(0, 0)])
     assert ws.is_numeric("A")
+
+def test_insert_rows_beyond_the_end_of_the_data_still_inserts_count():
+    ws = ws_ab(); ws.insert_rows(2, 2)
+    assert ws.nrows == 5 and ws.df["A"].tolist()[:2] == [1.0, 2.0] and ws.df["A"].isna().tolist()[2:4] == [True, True] and ws.df["A"][4] == 3.0
+    ws = ws_ab(); ws.insert_rows(0, 5); assert ws.nrows == 8

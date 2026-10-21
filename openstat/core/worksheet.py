@@ -203,15 +203,20 @@ class Worksheet:
         by_col = self._cells_by_column(cells)
         if not by_col:
             return
-        self.ensure_size(self.nrows + max(len(rows) for rows in by_col.values()), 0)
-        for c, rows in by_col.items():
-            name, k = self.df.columns[c], len(rows)
+        self._push({c: (rows[0], len(rows)) for c, rows in by_col.items()})
+
+    def _push(self, shifts: dict[int, tuple[int, int]]) -> None:
+        """Insert k blanks at row r in each column c of {c: (r, k)}, growing the sheet if needed."""
+        self.ensure_size(self.nrows + max(k for _, k in shifts.values()), 0)
+        for c, (r, k) in shifts.items():
+            name = self.df.columns[c]
             values = self._values(name)
-            self._put(name, values[:rows[0]] + [None] * k + values[rows[0]:len(values) - k])
+            self._put(name, values[:r] + [None] * k + values[r:len(values) - k])
         self.recalculate()
 
     def insert_rows(self, row: int, count: int) -> None:
-        self.insert_cells([(row + i, c) for i in range(count) for c in range(self.ncols)])
+        if 0 <= row < self.nrows and count > 0:   # rows past the data are blank already
+            self._push({c: (row, count) for c in range(self.ncols)})
 
     def delete_rows(self, rows: list[int]) -> None:
         drop = {r for r in rows if 0 <= r < self.nrows}
@@ -244,6 +249,7 @@ class Worksheet:
         if at is None:
             at = rest.index(anchor) + (where == "after")
         self.df = self.df[rest[:at] + moved + rest[at:]]
+        self.recalculate()
 
     def rename_column(self, col: int, new_name: str) -> None:
         new_name = new_name.strip()
