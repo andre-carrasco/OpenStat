@@ -94,3 +94,19 @@ def test_insert_rows_beyond_the_end_of_the_data_still_inserts_count():
 def test_insert_rows_without_columns_is_a_no_op():
     ws = ws_ab(); ws.delete_columns([0, 1]); ws.insert_rows(0, 1)
     assert ws.ncols == 0
+
+
+def test_levels_default_orders():
+    ws = Worksheet("W", pd.DataFrame({"N": [10.0, 2.0, 1.0], "T": ["b", "a", "c"],
+                                      "D": pd.to_datetime(["2024-02-01", "2023-12-31", "2024-01-15"])}))
+    assert ws.levels("N") == ["1", "2", "10"] and ws.levels("T") == ["a", "b", "c"]
+    assert ws.levels("D") == ["2023-12-31", "2024-01-15", "2024-02-01"]
+
+
+def test_levels_occurrence_and_user_order():
+    ws = Worksheet("W", pd.DataFrame({"T": ["b", "a", "c", "a"]}))
+    ws.value_orders["T"] = "occurrence"
+    assert ws.levels("T") == ["b", "a", "c"]
+    ws.value_orders["T"] = ["c", "z", "a"]
+    assert ws.levels("T") == ["c", "a", "b"]   # z missing, b new at end
+    assert ws.levels("T", pd.Series(["a", "c"])) == ["c", "a"]

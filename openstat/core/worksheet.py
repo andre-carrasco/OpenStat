@@ -345,3 +345,20 @@ class Worksheet:
     def column(self, name: str) -> pd.Series:
         """One column without its missing values."""
         return self.df[name].dropna()
+
+    def levels(self, name: str, labels: pd.Series | None = None) -> list[str]:
+        """Distinct formatted values of `labels` (default: the column) in the column's value order."""
+        col = self.df[name].dropna()
+        if labels is None:
+            labels = col
+        present = {format_value(v) for v in labels.dropna()}
+        order = self.value_orders.get(name)
+        if isinstance(order, list):
+            ranked = order
+        elif order == "occurrence":
+            ranked = [format_value(v) for v in col.drop_duplicates()]
+        elif self.is_numeric(name):
+            ranked = [format_value(v) for v in sorted(col.unique())]
+        else:
+            ranked = sorted({format_value(v) for v in col})   # dates: ISO text is chronological
+        return [v for v in ranked if v in present] + sorted(present - set(ranked))
