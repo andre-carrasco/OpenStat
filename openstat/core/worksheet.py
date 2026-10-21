@@ -161,13 +161,89 @@ class Worksheet:
             return
         self.ensure_size(row + 1, col + 1)
         name = self.df.columns[col]
-        current = [None if pd.isna(v) else v for v in self.df[name].tolist()]
+        current = self._values(name)
         # a date typed into a text column stays as it was typed
         current[row] = str(text).strip() if isinstance(value, datetime) else value
-        # Re-parse text so a column goes back to numeric or date once its last text cell is gone
-        column = coerce_values([parse_cell(v) if isinstance(v, str) else v for v in current])
-        self.df[name] = coerce_values(current) if column.dtype == object else column
+        self._put(name, current)
         self.recalculate()
+
+    def _values(self, name: str) -> list:
+        return [None if pd.isna(v) else v for v in self.df[name].tolist()]
+
+    def _put(self, name: str, values: list) -> None:
+        # Re-parse text so a column goes back to numeric or date once its last text cell is gone
+        column = coerce_values([parse_cell(v) if isinstance(v, str) else v for v in values])
+        self.df[name] = coerce_values(values) if column.dtype == object else column
+
+    def _cells_by_column(self, cells) -> dict[int, list[int]]:
+        by_col: dict[int, set[int]] = {}
+        for r, c in cells:
+            if 0 <= r < self.nrows and 0 <= c < self.ncols:
+                by_col.setdefault(c, set()).add(r)
+        return {c: sorted(rows) for c, rows in by_col.items()}
+
+    def delete_cells(self, cells) -> None:
+        """Remove the cells and pull up what is below them, column by column."""
+        for c, rows in self._cells_by_column(cells).items():
+            name, drop = self.df.columns[c], set(rows)
+            kept = [v for i, v in enumerate(self._values(name)) if i not in drop]
+            self._put(name, kept + [None] * len(drop))
+        self.recalculate()
+
+    def clear_cells(self, cells) -> None:
+        for c, rows in self._cells_by_column(cells).items():
+            name, values = self.df.columns[c], self._values(self.df.columns[c])
+            for r in rows:
+                values[r] = None
+            self._put(name, values)
+        self.recalculate()
+
+    def insert_cells(self, cells) -> None:
+        """Push each selected column down by the number of cells selected in it, growing the sheet if needed."""
+        by_col = self._cells_by_column(cells)
+        if not by_col:
+            return
+        self.ensure_size(self.nrows + max(len(rows) for rows in by_col.values()), 0)
+        for c, rows in by_col.items():
+            name, k = self.df.columns[c], len(rows)
+            values = self._values(name)
+            self._put(name, values[:rows[0]] + [None] * k + values[rows[0]:len(values) - k])
+        self.recalculate()
+
+    def insert_rows(self, row: int, count: int) -> None:
+        self.insert_cells([(row + i, c) for i in range(count) for c in range(self.ncols)])
+
+    def delete_rows(self, rows: list[int]) -> None:
+        drop = {r for r in rows if 0 <= r < self.nrows}
+        self.df = self.df.iloc[[i for i in range(self.nrows) if i not in drop]].reset_index(drop=True)
+        for name in self.df.columns:
+            self._put(name, self._values(name))
+        self.recalculate()
+
+    def insert_columns(self, col: int, count: int) -> None:
+        col = min(max(col, 0), self.ncols)
+        for i in range(count):
+            self.df.insert(col + i, self._unique_name(f"C{self.ncols + 1}"), np.full(self.nrows, np.nan))
+        self.recalculate()
+
+    def delete_columns(self, cols: list[int]) -> None:
+        names = [self.df.columns[c] for c in cols if 0 <= c < self.ncols]
+        self.df = self.df.drop(columns=names)
+        for store in (self.formulas, self.formats, self.descriptions, self.value_orders):
+            for name in names:
+                store.pop(name, None)
+        self.recalculate()
+
+    def move_columns(self, names: list[str], where: str, anchor: str | None = None) -> None:
+        """Move columns to the start or end, or before/after `anchor`, keeping their relative order."""
+        if where in ("before", "after") and anchor in names:
+            raise ValueError("Choose a column that is not being moved")
+        moved = [c for c in self.df.columns if c in names]
+        rest = [c for c in self.df.columns if c not in names]
+        at = {"start": 0, "end": len(rest)}.get(where)
+        if at is None:
+            at = rest.index(anchor) + (where == "after")
+        self.df = self.df[rest[:at] + moved + rest[at:]]
 
     def rename_column(self, col: int, new_name: str) -> None:
         new_name = new_name.strip()

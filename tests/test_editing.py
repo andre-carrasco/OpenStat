@@ -2,7 +2,9 @@
 import json
 import zipfile
 
+import numpy as np
 import pandas as pd
+import pytest
 
 from openstat.core.project import Project
 from openstat.core.worksheet import Worksheet, changed_parts
@@ -54,3 +56,32 @@ def test_old_project_without_new_keys_opens(tmp_path):
             dst.writestr(item, data)
     ws = Project.load(old).worksheets[0]
     assert ws.descriptions == {} and ws.value_orders == {}
+
+
+def test_delete_cells_shifts_up_per_column():
+    ws = ws_ab(); ws.delete_cells([(0, 0)])
+    assert ws.df["A"].tolist()[:2] == [2.0, 3.0] and np.isnan(ws.df["A"][2]) and ws.df["B"].tolist() == ["x", "y", "x"]
+
+def test_clear_cells_leaves_blanks():
+    ws = ws_ab(); ws.clear_cells([(1, 0), (1, 1)])
+    assert np.isnan(ws.df["A"][1]) and ws.df["B"][1] is None and ws.nrows == 3
+
+def test_insert_cells_pushes_down():
+    ws = ws_ab(); ws.insert_cells([(0, 0), (1, 0)])
+    assert ws.nrows == 5 and ws.df["A"].tolist()[2:] == [1.0, 2.0, 3.0]
+
+def test_insert_and_delete_rows_and_columns():
+    ws = ws_ab(); ws.insert_rows(1, 2); assert ws.nrows == 5 and ws.df["A"].tolist()[3:] == [2.0, 3.0]
+    ws.delete_rows([1, 2]); assert ws.df["A"].tolist() == [1.0, 2.0, 3.0]
+    ws.insert_columns(1, 1); assert ws.column_names()[0] == "A" and ws.column_names()[2] == "B"
+    ws.descriptions["B"] = "d"; ws.delete_columns([2]); assert "B" not in ws.column_names() and ws.descriptions == {}
+
+def test_move_columns():
+    ws = Worksheet("W", pd.DataFrame({c: [1.0] for c in "ABCD"}))
+    ws.move_columns(["D", "B"], "start"); assert ws.column_names() == ["B", "D", "A", "C"]
+    ws.move_columns(["B"], "after", "C"); assert ws.column_names() == ["D", "A", "C", "B"]
+    with pytest.raises(ValueError): ws.move_columns(["A"], "before", "A")
+
+def test_text_column_becomes_numeric_after_deleting_its_text():
+    ws = Worksheet("W", pd.DataFrame({"A": ["a", "2", "3"]})); ws.delete_cells([(0, 0)])
+    assert ws.is_numeric("A")
