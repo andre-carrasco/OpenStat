@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
             for name, expression in result.formulas.items():
                 ws.set_formula(name, expression)
         if result.stored or result.formulas:
-            self.view_of(ws).edit(result.title, store)
+            self.view_of(ws).change(result.title, store)
             self.worksheets_changed()
         for name, df in result.worksheets:
             self.add_worksheet(Worksheet(name, df))

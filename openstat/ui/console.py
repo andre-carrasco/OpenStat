@@ -119,7 +119,7 @@ class Console(QWidget):
             if isinstance(new_df, pd.DataFrame):
                 ws.df = normalize_frame(new_df)   # whatever the command produced, in worksheet form
                 ws.recalculate()
-        self.window_.view_of(ws).edit("Command Line", apply)
+        self.window_.view_of(ws).change("Command Line", apply)
         output = buffer.getvalue().rstrip()
         if output:
             self.log.appendPlainText(output)

@@ -1824,5 +1824,6 @@
   "Undo": "Desfazer",
   "Redo": "Refazer",
   "Typing": "Digitação",
-  "Paste": "Colar"
+  "Paste": "Colar",
+  "Choose a column that is not being moved": "Escolha uma coluna que não esteja sendo movida"
 }

@@ -78,15 +78,18 @@ def test_undo_history_is_per_worksheet(window):
     assert a.ws.df.iat[0, 0] == 50.0 and a.undo_stack.count() == 1 and a.undo_stack.canUndo()
 
 
-def test_typing_in_a_cell_still_opens_the_editor(window):
+def test_typing_in_a_cell_opens_the_editor_and_records_a_step(window):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QTableView
+    from PySide6.QtWidgets import QApplication, QTableView
 
     view = window.current_view(); window.show()
     view.setCurrentIndex(view.model_.index(0, 0))
     QTest.keyClick(view, Qt.Key_5)
     assert view.state() == QTableView.EditingState
+    QTest.keyClick(view.indexWidget(view.currentIndex()), Qt.Key_Return)
+    QApplication.processEvents()   # the delegate commits on Return through a queued call
+    assert view.ws.df.iat[0, 0] == 5.0 and view.undo_stack.count() == 1
 
 
 def test_no_step_when_nothing_changed(window):

@@ -44,10 +44,10 @@ class FormatDialog(QDialog):
 
 
 class WorksheetModel(QAbstractTableModel):
-    def __init__(self, worksheet: Worksheet, edit: Callable, parent=None):
+    def __init__(self, worksheet: Worksheet, change: Callable, parent=None):
         super().__init__(parent)
         self.ws = worksheet
-        self.edit = edit   # WorksheetView.edit, which makes each change one undo step
+        self.change = change   # WorksheetView.change, which makes each change one undo step
         self._colors: dict[str, list] = {}   # conditional formatting of each column, until the next change
         self.modelAboutToBeReset.connect(lambda: self._colors.clear())
 
@@ -118,7 +118,7 @@ class WorksheetModel(QAbstractTableModel):
         def apply():
             for row, col, value in cells:
                 self.ws.set_cell(row, col, value)
-        self.edit(text, apply)
+        self.change(text, apply)
         self.refresh()
 
     def refresh(self) -> None:
@@ -133,7 +133,7 @@ class WorksheetView(QTableView):
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(50)
         self._editing = False
-        self.model_ = WorksheetModel(worksheet, self.edit, self)
+        self.model_ = WorksheetModel(worksheet, self.change, self)
         self.setModel(self.model_)
         self.horizontalHeader().setDefaultSectionSize(90)
         self.verticalHeader().setDefaultSectionSize(22)
@@ -144,10 +144,8 @@ class WorksheetView(QTableView):
     def refresh(self) -> None:
         self.model_.refresh()
 
-    def edit(self, text: str, action: Callable[[], object], *qt_args) -> object:
+    def change(self, text: str, action: Callable[[], object]) -> object:
         """Run `action` as one undo step named `text`; a call inside another joins the outer step."""
-        if isinstance(text, QModelIndex):   # Qt's own edit(index, trigger, event), which opens the cell editor
-            return super().edit(text, action, *qt_args)
         if self._editing:
             return action()
         before = self.ws.snapshot()
@@ -193,7 +191,7 @@ class WorksheetView(QTableView):
                 self.ws.formats[name] = rules
             else:
                 self.ws.formats.pop(name, None)
-        self.edit("Conditional Formatting", apply)
+        self.change("Conditional Formatting", apply)
         self.refresh()
 
     def rename_column(self, section: int) -> None:
@@ -205,7 +203,7 @@ class WorksheetView(QTableView):
                     self.ws.ensure_size(self.ws.nrows, section + 1)
                 self.ws.rename_column(section, name)
             try:
-                self.edit("Rename column", apply)
+                self.change("Rename column", apply)
             except ValueError as exc:
                 QMessageBox.warning(self, tr("Error"), str(exc))
         self.refresh()
