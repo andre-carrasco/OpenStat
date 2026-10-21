@@ -22,7 +22,7 @@ def scatterplot(ws, y, x, by=None, fit=False):
     cols = [y, x] + ([by] if by else [])
     frame = ws.df[cols].dropna()
     fig, ax = _axes(f"{tr('Scatterplot')}: {y} vs {x}", x, y)
-    parts = [(None, frame)] if not by else [(format_value(k), g) for k, g in frame.groupby(by, sort=True)]
+    parts = [(None, frame)] if not by else [(k, frame[frame[by].map(format_value) == k]) for k in ws.levels(by, frame[by].map(format_value))]
     for i, (label, g) in enumerate(parts):
         color = PALETTE[i % len(PALETTE)]
         ax.plot(g[x], g[y], "o", color=color, markersize=5, label=label)
@@ -114,8 +114,8 @@ def line_plot(ws, y, category, by=None):
     cols = [y, category] + ([by] if by else [])
     frame = ws.df[cols].dropna()
     fig, ax = _axes(f"{tr('Line Plot')}: {tr('Mean')} ({y})", category, f"{tr('Mean')} ({y})")
-    parts = [(None, frame)] if not by else [(format_value(k), g) for k, g in frame.groupby(by, sort=True)]
-    levels = sorted(frame[category].map(format_value).unique())
+    parts = [(None, frame)] if not by else [(k, frame[frame[by].map(format_value) == k]) for k in ws.levels(by, frame[by].map(format_value))]
+    levels = ws.levels(category, frame[category].map(format_value))
     for i, (label, g) in enumerate(parts):
         means = g.groupby(g[category].map(format_value))[y].mean().reindex(levels)
         ax.plot(levels, means.to_numpy(), "-o", color=PALETTE[i % len(PALETTE)], label=label)

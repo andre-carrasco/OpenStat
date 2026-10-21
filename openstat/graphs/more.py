@@ -52,7 +52,7 @@ def parallel_coordinates(ws, columns, by=None, standardize=True):
     fig, ax = _axes(tr("Parallel Coordinates Plot"), "", tr("Scaled value") if standardize else "",
                     width=max(6.0, 1.3 * len(columns)))
     positions = np.arange(len(columns))
-    for i, level in enumerate(sorted(labels.unique())):
+    for i, level in enumerate(ws.levels(by, labels) if by else [""]):
         rows = values[(labels == level).to_numpy()].to_numpy()
         ax.plot(positions, rows.T, color=PALETTE[i % len(PALETTE)] if by else BLUE, alpha=0.5, linewidth=0.8)
         if by:

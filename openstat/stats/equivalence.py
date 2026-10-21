@@ -89,11 +89,11 @@ def paired(ws, test, reference, lower=-1.0, upper=1.0, alpha=0.05):
     return _report("Equivalence Test: Paired", f"{test} − {reference}", out, lower, upper, alpha)
 
 
-def crossover_effect(period1, period2, sequence) -> tuple[float, float, int]:
+def crossover_effect(period1, period2, sequence, order: list[str] | None = None) -> tuple[float, float, int]:
     """Treatment effect (first-sequence period-1 treatment minus the other) in a 2x2 crossover."""
     frame = pd.DataFrame({"p1": period1, "p2": period2, "seq": sequence}).dropna()
     labels = frame["seq"].map(format_value)
-    levels = sorted(labels.unique())
+    levels = [v for v in order if v in set(labels)] if order is not None else sorted(labels.unique())
     if len(levels) != 2:
         raise ValueError("The sequence column must have exactly two values")
     d = (frame["p1"].astype(float) - frame["p2"].astype(float)).to_numpy()
@@ -110,6 +110,6 @@ def crossover_effect(period1, period2, sequence) -> tuple[float, float, int]:
           params=[Param("period1", "Period 1 response", "column"), Param("period2", "Period 2 response", "column"),
                   Param("sequence", "Sequence", "column", numeric=False), LOWER, UPPER, ALPHA])
 def crossover(ws, period1, period2, sequence, lower=-1.0, upper=1.0, alpha=0.05):
-    effect, se, df = crossover_effect(ws.df[period1], ws.df[period2], ws.df[sequence])
+    effect, se, df = crossover_effect(ws.df[period1], ws.df[period2], ws.df[sequence], ws.levels(sequence))
     out = tost(effect, se, df, lower, upper, alpha)
     return _report("Equivalence Test: 2x2 Crossover", tr("Treatment effect"), out, lower, upper, alpha)

@@ -24,9 +24,10 @@ def groups(ws, columns, by=None) -> list[tuple[str, np.ndarray]]:
     out = []
     for name in columns:
         if by:
-            for level, group in ws.df.groupby(by, sort=True)[name]:
-                out.append((f"{name}\n{format_value(level)}" if len(columns) > 1 else format_value(level),
-                            clean(group)))
+            labels = ws.df[by].map(format_value)
+            for level in ws.levels(by):
+                out.append((f"{name}\n{level}" if len(columns) > 1 else level,
+                            clean(ws.df[name][labels == level])))
         else:
             out.append((name, clean(ws.df[name])))
     return [(label, x) for label, x in out if len(x)]

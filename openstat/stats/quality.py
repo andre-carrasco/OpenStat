@@ -729,9 +729,9 @@ def multi_vari(ws, response, factor1, factor2=None, factor3=None):
     frame = ws.df[[response] + factors].dropna()
     labels = {f: frame[f].map(format_value) for f in factors}
     y = frame[response].astype(float)
-    panels = sorted(labels[factor3].unique()) if factor3 else [None]
-    outer = sorted(labels[factor2].unique()) if factor2 else [None]
-    inner = sorted(labels[factor1].unique())
+    panels = ws.levels(factor3, labels[factor3]) if factor3 else [None]
+    outer = ws.levels(factor2, labels[factor2]) if factor2 else [None]
+    inner = ws.levels(factor1, labels[factor1])
     fig = new_figure(max(6.0, 0.5 * len(inner) * len(outer) * len(panels) + 2), 4.2)
     axes = fig.subplots(1, len(panels), sharey=True, squeeze=False)[0]
     step = len(inner) + 1

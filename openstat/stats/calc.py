@@ -151,15 +151,16 @@ MAX_LEVELS = 100
           params=[Param("column", "Column", "column", numeric=False)])
 def indicator(ws, column):
     col = ws.df[column]
-    levels = sorted(col.dropna().unique())
+    levels = ws.levels(column)
+    labels = col.map(format_value)
     if len(levels) > MAX_LEVELS:
         raise ValueError("Too many distinct values to make indicator variables")
     res = Result("Make Indicator Variables")
     rows = []
     for level in levels:
-        name = f"{column}_{format_value(level)}"
-        res.store(name, np.where(col.isna(), np.nan, (col == level).astype(float)).tolist())
-        rows.append({"Value": format_value(level), "Column": name, "N": int((col == level).sum())})
+        name = f"{column}_{level}"
+        res.store(name, np.where(col.isna(), np.nan, (labels == level).astype(float)).tolist())
+        rows.append({"Value": level, "Column": name, "N": int((labels == level).sum())})
     res.table(pd.DataFrame(rows), index=False)
     return res
 

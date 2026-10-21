@@ -30,8 +30,10 @@ MULTIPLIER = Param("multiplier", "Study variation (number of standard deviations
 
 def _frame(ws, part, operator, measurement) -> pd.DataFrame:
     frame = ws.df[[part, operator, measurement]].dropna()
-    return pd.DataFrame({"part": frame[part].map(format_value), "operator": frame[operator].map(format_value),
-                         "y": frame[measurement].astype(float)})
+    out = pd.DataFrame({"part": frame[part].map(format_value), "operator": frame[operator].map(format_value),
+                        "y": frame[measurement].astype(float)})
+    out.attrs = {"parts": ws.levels(part, out["part"]), "operators": ws.levels(operator, out["operator"])}   # value order
+    return out
 
 
 def crossed_anova(frame: pd.DataFrame, alpha_interaction: float = 0.05) -> dict:
@@ -120,12 +122,12 @@ def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: 
     a.bar(pos + 0.2, main["% Study Var"], 0.4, color="#ed7d31", label=tr("% Study Var"))
     a.set_xticks(pos, [tr(s.strip()) for s in main.index], fontsize=7)
     a.set_title(tr("Components of Variation"), fontsize=9), a.legend(fontsize=7)
-    parts = sorted(frame["part"].unique())
+    parts = frame.attrs.get("parts") or sorted(frame["part"].unique())
     b.plot([parts.index(v) for v in frame["part"]], frame["y"], "o", color=GRAY, markersize=3)
     b.plot(range(len(parts)), frame.groupby("part")["y"].mean().reindex(parts), "-o", color=BLUE)
     b.set_xticks(range(len(parts)), parts, fontsize=7, rotation=45 if len(parts) > 10 else 0)
     b.set_title(tr("Measurement by Part"), fontsize=9)
-    operators = sorted(frame["operator"].unique())
+    operators = frame.attrs.get("operators") or sorted(frame["operator"].unique())
     c.boxplot([frame["y"][frame["operator"] == o] for o in operators], tick_labels=operators)
     c.set_title(tr("Measurement by Operator"), fontsize=9)
     if crossed:
@@ -227,7 +229,7 @@ def gage_expanded(ws, part, operator, measurement, extra, tolerance="", multipli
 @analysis("gage.run_chart", menu=MENU, title="Gage Run Chart", params=[PART, OPERATOR, MEASUREMENT])
 def gage_run_chart(ws, part, operator, measurement):
     frame = _frame(ws, part, operator, measurement)
-    parts, operators = sorted(frame["part"].unique()), sorted(frame["operator"].unique())
+    parts, operators = frame.attrs["parts"], frame.attrs["operators"]
     columns = min(5, len(parts))
     rows = int(np.ceil(len(parts) / columns))
     fig = new_figure(2.2 * columns + 1.0, 2.4 * rows + 0.8)
@@ -345,12 +347,15 @@ def variability_chart(ws, response, factors):
     frame = ws.df[[response] + factors].dropna()
     labels = [frame[f].map(format_value) for f in factors]
     cells = frame[response].astype(float).groupby(labels, sort=True)
+    ranks = [{v: i for i, v in enumerate(ws.levels(f, lab))} for f, lab in zip(factors, labels)]
     summary = cells.agg(["count", "mean", "std", "min", "max"])
+    summary = summary.loc[sorted(summary.index, key=lambda k: [r[v] for r, v in zip(ranks, k if isinstance(k, tuple) else (k,))])]
     names = [", ".join(i) if isinstance(i, tuple) else str(i) for i in summary.index]
     position = np.arange(len(summary))
     fig = new_figure(max(6.0, 0.45 * len(summary) + 2), 6.0)
     top, bottom = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
-    for x, (_, values) in zip(position, cells):
+    for x, key in zip(position, summary.index):
+        values = cells.get_group(key)
         top.plot(np.full(len(values), x), values, "o", color=GRAY, markersize=3)
     top.vlines(position, summary["min"], summary["max"], color=BLUE, linewidth=1)
     top.plot(position, summary["mean"], "_", color=RED, markersize=14, markeredgewidth=2)
@@ -480,10 +485,11 @@ def _agreement_row(matched: int, inspected: int, confidence: float) -> dict:
 def attribute_agreement(ws, rating, sample, appraiser, standard=None, confidence=95.0):
     cols = [rating, sample, appraiser] + ([standard] if standard else [])
     frame = ws.df[cols].dropna().map(format_value)
-    samples = sorted(frame[sample].unique())
+    samples = ws.levels(sample, frame[sample])
     res = Result("Attribute Agreement Analysis")
     within, versus = {}, {}
-    for name, group in frame.groupby(appraiser, sort=True):
+    for name in ws.levels(appraiser, frame[appraiser]):
+        group = frame[frame[appraiser] == name]
         per_sample = group.groupby(sample)[rating]
         if per_sample.size().min() > 1:
             agree = int((per_sample.nunique() == 1).sum())

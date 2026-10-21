@@ -32,7 +32,7 @@ FACTORS = Param("factors", "Factors", "columns", numeric=False)
 def factor_groups(ws, response, factor) -> dict[str, np.ndarray]:
     frame = ws.df[[response, factor]].dropna()
     labels = frame[factor].map(format_value)
-    groups = {level: frame[response][labels == level].to_numpy(dtype=float) for level in sorted(labels.unique())}
+    groups = {level: frame[response][labels == level].to_numpy(dtype=float) for level in ws.levels(factor, labels)}
     if len(groups) < 2:
         raise ValueError("The factor needs at least two levels")
     return groups

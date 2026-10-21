@@ -82,7 +82,7 @@ def mann_whitney(ws, sample1, sample2, alternative=NOT_EQUAL):
 def _by_factor(ws, response, factor):
     frame = ws.df[[response, factor]].dropna()
     labels = frame[factor].map(format_value)
-    levels = sorted(labels.unique())
+    levels = ws.levels(factor, labels)
     if len(levels) < 2:
         raise ValueError("The factor needs at least two levels")
     return frame[response].to_numpy(dtype=float), labels.to_numpy(), levels

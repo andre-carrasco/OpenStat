@@ -13,7 +13,7 @@ from openstat.graphs import new_figure
 from openstat.i18n import tr
 from openstat.stats._tests import (ALTERNATIVE, CONFIDENCE, GREATER, LESS, NOT_EQUAL, SCIPY_ALT, bounds, p_value,
                                    tail_levels)
-from openstat.stats._util import anderson_darling_normal, clean, mean_ci, quartiles
+from openstat.stats._util import anderson_darling_normal, by_levels, clean, mean_ci, quartiles
 
 MENU = ("Stat", "Basic Statistics")
 VARIABLES = Param("columns", "Variables", "columns")
@@ -66,7 +66,7 @@ def describe(ws, columns, by=None, more=False):
         parts = [(name, ws.df[name])]
         if by:
             parts = [(f"{name} ({by} = {format_value(level)})", group)
-                     for level, group in ws.df.groupby(by, sort=True)[name]]
+                     for level, group in ((v, rows[name]) for v, rows in by_levels(ws, by))]
         for label, values in parts:
             rows.append(describe_values(values))
             extra.append(more_values(values))
@@ -83,7 +83,7 @@ def describe(ws, columns, by=None, more=False):
 def store_describe(ws, columns, by=None):
     rows = []
     for name in columns:
-        groups = ws.df.groupby(by, sort=True)[name] if by else [(None, ws.df[name])]
+        groups = [(v, rows[name]) for v, rows in by_levels(ws, by)] if by else [(None, ws.df[name])]
         for level, values in groups:
             row = {"Variable": name}
             if by:

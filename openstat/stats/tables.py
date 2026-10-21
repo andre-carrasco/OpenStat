@@ -78,10 +78,11 @@ def ordered(labels) -> list[str]:
         return sorted(labels)
 
 
-def crosstab(first: pd.Series, second: pd.Series) -> pd.DataFrame:
-    """Counts of two columns, with the categories of each in order."""
+def crosstab(first: pd.Series, second: pd.Series, orders: tuple | None = None) -> pd.DataFrame:
+    """Counts of two columns, with the categories of each in order (`orders`: the row and column labels, in order)."""
     table = pd.crosstab(first.map(format_value), second.map(format_value))
-    return table.loc[ordered(table.index), ordered(table.columns)]
+    rows, cols = orders or (ordered(table.index), ordered(table.columns))
+    return table.loc[rows, cols]
 
 
 def ordinal_measures(obs: np.ndarray) -> dict:
@@ -111,7 +112,8 @@ def ordinal_measures(obs: np.ndarray) -> dict:
                   Param("measures", "Measures for ordinal categories and agreement (kappa)", "bool", default=False)])
 def cross_tabulation(ws, rows, cols, measures=False):
     frame = ws.df[[rows, cols]].dropna()
-    observed = crosstab(frame[rows], frame[cols])
+    observed = crosstab(frame[rows], frame[cols], (ws.levels(rows, frame[rows].map(format_value)),
+                                                   ws.levels(cols, frame[cols].map(format_value))))
     res = Result("Cross Tabulation and Chi-Square")
     res.text(f"{tr('Rows')}: {rows}    {tr('Columns')}: {cols}")
     shown = observed.copy()

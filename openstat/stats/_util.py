@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 from scipy import stats as sps
 
+from openstat.core.worksheet import format_value
+
 
 def clean(values) -> np.ndarray:
     x = np.asarray(values, dtype=float)
@@ -54,3 +56,10 @@ def mean_ci(values, confidence: float = 0.95) -> tuple[float, float, float]:
         return mean, float("nan"), float("nan")
     half = sps.t.ppf(0.5 + confidence / 2, n - 1) * x.std(ddof=1) / np.sqrt(n)
     return mean, mean - half, mean + half
+
+
+def by_levels(ws, by: str) -> list[tuple]:
+    """(value, rows) for each level of column `by`, in the column's value order."""
+    frame = ws.df[ws.df[by].notna()]
+    labels = frame[by].map(format_value)
+    return [(frame.loc[labels == level, by].iloc[0], frame[labels == level]) for level in ws.levels(by)]

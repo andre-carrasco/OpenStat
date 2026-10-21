@@ -11,6 +11,7 @@ from openstat.core.registry import Param, analysis
 from openstat.core.result import Result
 from openstat.core.worksheet import format_value, parse_cell, parse_date
 from openstat.i18n import tr
+from openstat.stats._util import by_levels
 
 MENU = ("Data",)
 
@@ -59,7 +60,8 @@ def stack(ws, columns):
                   Param("by", "Subscripts", "column", numeric=False)])
 def unstack(ws, column, by):
     res = Result("Unstack Columns")
-    for level, group in ws.df.groupby(by, sort=True)[column]:
+    for level, rows in by_levels(ws, by):
+        group = rows[column]
         res.store(f"{column}_{format_value(level)}", group.dropna().tolist())
     return _stored_note(res)
 
@@ -201,7 +203,7 @@ MAX_SPLIT = 50
 @analysis("data.split", menu=MENU, title="Split Worksheet",
           params=[Param("by", "By variable", "column", numeric=False)])
 def split(ws, by):
-    groups = list(ws.df.groupby(by, sort=True))
+    groups = by_levels(ws, by)
     if len(groups) > MAX_SPLIT:
         raise ValueError("Too many groups to split the worksheet by")
     res = Result("Split Worksheet")
