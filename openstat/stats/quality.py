@@ -758,6 +758,8 @@ def multi_vari(ws, response, factor1, factor2=None, factor3=None):
     fig.suptitle(f"{tr('Multi-Vari Chart')}: {response} {tr('by')} {', '.join(factors)}")
     table = y.groupby([labels[f] for f in reversed(factors)]).agg(["count", "mean", "std"])
     table.columns = ["N", "Mean", "StDev"]
+    ranks = [{v: i for i, v in enumerate(ws.levels(f, labels[f]))} for f in reversed(factors)]
+    table = table.loc[sorted(table.index, key=lambda k: [r[v] for r, v in zip(ranks, k if isinstance(k, tuple) else (k,))])]
     table.index = [", ".join(map(str, i)) if isinstance(i, tuple) else i for i in table.index]
     table.index.name = ", ".join(reversed(factors))
     return Result("Multi-Vari Chart").figure(fig).table(table)

@@ -30,9 +30,8 @@ MULTIPLIER = Param("multiplier", "Study variation (number of standard deviations
 
 def _frame(ws, part, operator, measurement) -> pd.DataFrame:
     frame = ws.df[[part, operator, measurement]].dropna()
-    out = pd.DataFrame({"part": frame[part].map(format_value), "operator": frame[operator].map(format_value),
-                        "y": frame[measurement].astype(float)})
-    return out
+    return pd.DataFrame({"part": frame[part].map(format_value), "operator": frame[operator].map(format_value),
+                         "y": frame[measurement].astype(float)})
 
 
 def _orders(ws, frame, part, operator) -> dict:
@@ -135,7 +134,7 @@ def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: 
     c.boxplot([frame["y"][frame["operator"] == o] for o in operators], tick_labels=operators)
     c.set_title(tr("Measurement by Operator"), fontsize=9)
     if crossed:
-        means = frame.groupby(["operator", "part"])["y"].mean().unstack()
+        means = frame.groupby(["operator", "part"])["y"].mean().unstack().reindex(operators)
         for i, (oper, row) in enumerate(means.iterrows()):
             d.plot(range(len(parts)), row.reindex(parts), "-o", color=PALETTE[i % len(PALETTE)], markersize=4,
                    label=oper)
@@ -144,6 +143,7 @@ def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: 
         d.set_title(tr("Part * Operator Interaction"), fontsize=9)
     else:
         ranges = frame.groupby(["operator", "part"])["y"].agg(lambda v: v.max() - v.min())
+        ranges = ranges.reindex(pd.MultiIndex.from_product([operators, parts])).dropna()
         d.plot(range(len(ranges)), ranges.to_numpy(), "-o", color=BLUE, markersize=4)
         d.set_title(tr("Range by Part (within Operator)"), fontsize=9)
     fig.suptitle(title)
@@ -360,7 +360,7 @@ def variability_chart(ws, response, factors):
     fig = new_figure(max(6.0, 0.45 * len(summary) + 2), 6.0)
     top, bottom = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
     for x, key in zip(position, summary.index):
-        values = cells.get_group(key)
+        values = cells.get_group(key if isinstance(key, tuple) else (key,))
         top.plot(np.full(len(values), x), values, "o", color=GRAY, markersize=3)
     top.vlines(position, summary["min"], summary["max"], color=BLUE, linewidth=1)
     top.plot(position, summary["mean"], "_", color=RED, markersize=14, markeredgewidth=2)

@@ -65,8 +65,7 @@ def describe(ws, columns, by=None, more=False):
     for name in columns:
         parts = [(name, ws.df[name])]
         if by:
-            parts = [(f"{name} ({by} = {format_value(level)})", group)
-                     for level, group in ((v, rows[name]) for v, rows in by_levels(ws, by))]
+            parts = [(f"{name} ({by} = {format_value(level)})", frame[name]) for level, frame in by_levels(ws, by)]
         for label, values in parts:
             rows.append(describe_values(values))
             extra.append(more_values(values))
@@ -83,7 +82,7 @@ def describe(ws, columns, by=None, more=False):
 def store_describe(ws, columns, by=None):
     rows = []
     for name in columns:
-        groups = [(v, rows[name]) for v, rows in by_levels(ws, by)] if by else [(None, ws.df[name])]
+        groups = [(v, frame[name]) for v, frame in by_levels(ws, by)] if by else [(None, ws.df[name])]
         for level, values in groups:
             row = {"Variable": name}
             if by:

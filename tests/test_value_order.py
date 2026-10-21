@@ -3,7 +3,7 @@ import pandas as pd
 
 from openstat.core.worksheet import Worksheet
 from openstat.graphs import basic as graphs_basic
-from openstat.stats import anova, basic, calc, data, tables
+from openstat.stats import anova, basic, calc, data, quality, tables
 
 REVERSED = ["D", "C", "B", "A"]
 
@@ -59,3 +59,15 @@ def test_tally_and_describe_table_follow_value_order(sample_ws):
     sample_ws.value_orders["Group"] = REVERSED
     assert list(tables_of(tables.tally(sample_ws, ["Group"]))[0].index) == REVERSED
     assert list(tables_of(tables.describe_table(sample_ws, "Group", "Y"))[0].index) == REVERSED
+
+
+def test_factorial_plots_and_multi_vari_follow_value_order(sample_ws):
+    ws = Worksheet("N", pd.DataFrame({"y": [float(i) for i in range(30)], "f": [1, 2, 10] * 10,
+                                      "g": ["a", "b"] * 15}))
+    means = next(t for t in tables_of(anova.one_way(ws, "y", "f")) if "Mean" in t.columns)
+    assert list(means.index) == ["1", "2", "10"]
+    fig = anova.main_effects_plot(ws, "y", ["f"]).blocks[0][1]
+    assert [t.get_text() for t in fig.axes[0].get_xticklabels()] == ["1", "2", "10"]
+    sample_ws.value_orders["Group"] = REVERSED
+    table = tables_of(quality.multi_vari(sample_ws, "Y", "Group"))[0]
+    assert list(table.index) == REVERSED

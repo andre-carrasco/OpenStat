@@ -401,8 +401,10 @@ def general_linear_model(ws, response, factors, covariates=None, interactions=Fa
     linear_report(res, ws, response, design, store, plots, show_equation=False)
     frame = ws.df.iloc[design.rows]
     for factor in factors:
-        grouped = frame.groupby(frame[factor].map(format_value))[response]
+        labels = frame[factor].map(format_value)
+        grouped = frame.groupby(labels)[response]
         means = pd.DataFrame({"N": grouped.count(), "Mean": grouped.mean(), "StDev": grouped.std(ddof=1)})
+        means = means.reindex(ws.levels(factor, labels))
         means.index.name = factor
         res.table(means, title=f"{tr('Means')}: {factor}")
     return res
@@ -568,7 +570,8 @@ def main_effects_plot(ws, response, factors):
     fig = new_figure(max(5.0, 2.6 * len(factors)), 3.8)
     axes = fig.subplots(1, len(factors), sharey=True, squeeze=False)[0]
     for ax, factor in zip(axes, factors):
-        means = frame.groupby(frame[factor].map(format_value))[response].mean()
+        labels = frame[factor].map(format_value)
+        means = frame.groupby(labels)[response].mean().reindex(ws.levels(factor, labels))
         ax.plot(list(means.index), means.to_numpy(), "-o", color=BLUE)
         ax.axhline(grand, color=GRAY, linestyle="--")
         ax.set_xlabel(factor)
@@ -584,8 +587,9 @@ def interaction_plot(ws, response, factor1, factor2):
     if factor1 == factor2:
         raise ValueError("Select a different column for each factor")
     frame = ws.df[[response, factor1, factor2]].dropna()
-    means = frame.groupby([frame[factor2].map(format_value), frame[factor1].map(format_value)])[response].mean()
-    wide = means.unstack()
+    lines, xs = frame[factor2].map(format_value), frame[factor1].map(format_value)
+    wide = frame.groupby([lines, xs])[response].mean().unstack()
+    wide = wide.reindex(index=ws.levels(factor2, lines), columns=ws.levels(factor1, xs))
     fig = new_figure()
     ax = fig.add_subplot()
     for i, (level, row) in enumerate(wide.iterrows()):
