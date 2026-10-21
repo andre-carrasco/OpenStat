@@ -1,5 +1,6 @@
 """Graphs and grouped analyses follow the column's value order (Worksheet.levels)."""
 import pandas as pd
+import pytest
 
 from openstat.core.worksheet import Worksheet
 from openstat.graphs import basic as graphs_basic
@@ -126,3 +127,13 @@ def test_indicator_predictors_follow_value_order(sample_ws):
     sample_ws.value_orders["Group"] = REVERSED
     X, _ = predictive.predictor_matrix(sample_ws, "Y", [], ["Group"])
     assert list(X.columns) == [f"Group = {g}" for g in REVERSED]
+
+
+def test_predict_codes_points_with_the_fit_levels(sample_ws):
+    sample_ws.df.loc[0, "Y"] = float("nan")   # the first row (Group A) is dropped from the fit
+    used = sample_ws.df.dropna(subset=["Y"])
+    for order in (["C", "A", "B", "D"], "occurrence"):
+        sample_ws.value_orders["Group"] = order
+        res = regression.predict(sample_ws, "Y", categorical=["Group"], values="Group=A; Group=B; Group=C; Group=D")
+        fits = tables_of(res)[0]["Fit"].to_numpy()
+        assert fits == pytest.approx(used.groupby("Group")["Y"].mean().loc[list("ABCD")].to_numpy())

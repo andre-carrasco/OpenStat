@@ -262,17 +262,18 @@ def paired_t(ws, sample1, sample2, delta0=0.0, confidence=95.0, alternative=NOT_
 
 # ----- proportions and rates -----
 
-def _events(ws, column, events, trials) -> tuple[int, int]:
-    """Events and trials from a two-level column (event = last level in value order) or from summarized counts."""
+def _events(ws, column, events, trials) -> tuple[int, int, str | None]:
+    """Events, trials and the event level from a two-level column (event = last level in value order) or from
+    summarized counts (no event level)."""
     if column:
         labels = ws.df[column].dropna().map(format_value)
         levels = ws.levels(column, labels)
         if len(levels) > 2:
             raise ValueError(f"{column}: the column must have two distinct values")
-        return int((labels == levels[-1]).sum()), len(labels)
+        return int((labels == levels[-1]).sum()), len(labels), levels[-1]
     if trials < 1 or not 0 <= events <= trials:
         raise ValueError("Events must be between 0 and the number of trials")
-    return int(events), int(trials)
+    return int(events), int(trials), None
 
 
 def clopper_pearson(k: int, n: int, confidence=95.0, alternative=NOT_EQUAL):
@@ -294,7 +295,7 @@ PROPORTION_METHODS = ["Exact", "Normal approximation"]
                   CONFIDENCE, ALTERNATIVE])
 def one_proportion(ws, column=None, events=0, trials=0, p0=0.5, method="Exact", confidence=95.0,
                    alternative=NOT_EQUAL):
-    k, n = _events(ws, column, events, trials)
+    k, n, event = _events(ws, column, events, trials)
     p_hat = k / n
     row = {"X": k, "N": n, "Sample p": p_hat}
     if method == "Exact":
@@ -308,7 +309,7 @@ def one_proportion(ws, column=None, events=0, trials=0, p0=0.5, method="Exact", 
     res = Result("1 Proportion")
     res.text(f"H0: p = {p0:g}    H1: p {_symbol(alternative)} {p0:g}    {tr(method)}    {confidence:g}% CI")
     if column:
-        res.text(f"{tr('Event')}: {column} = {ws.levels(column, ws.df[column].dropna().map(format_value))[-1]}")
+        res.text(f"{tr('Event')}: {column} = {event}")
     return res.table(pd.DataFrame([row]), index=False, digits=6)
 
 
@@ -319,8 +320,8 @@ def one_proportion(ws, column=None, events=0, trials=0, p0=0.5, method="Exact", 
                   Param("trials2", "Trials in sample 2", "int", default=0, minimum=0),
                   CONFIDENCE, ALTERNATIVE])
 def two_proportions(ws, events1, trials1, events2, trials2, confidence=95.0, alternative=NOT_EQUAL):
-    k1, n1 = _events(ws, None, events1, trials1)
-    k2, n2 = _events(ws, None, events2, trials2)
+    k1, n1, _ = _events(ws, None, events1, trials1)
+    k2, n2, _ = _events(ws, None, events2, trials2)
     p1, p2 = k1 / n1, k2 / n2
     diff = p1 - p2
     lo, hi = bounds(diff, np.sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2), sps.norm(), confidence, alternative)

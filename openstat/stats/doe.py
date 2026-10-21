@@ -443,7 +443,7 @@ def code_two_level(series: pd.Series, name: str, ws=None) -> np.ndarray:
             raise ValueError(f"{name}: a two-level factor may only have a low level, a high level and center points")
         return np.round(coded, 10)
     labels = series.map(format_value)
-    levels = ws.levels(name, labels) if ws else sorted(labels.unique())
+    levels = ws.levels(name, labels) if ws is not None else sorted(labels.unique())
     if len(levels) != 2:
         raise ValueError(f"{name}: a text factor must have exactly two levels")
     return np.where(labels == levels[0], -1.0, 1.0)

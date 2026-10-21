@@ -203,7 +203,7 @@ def design_rows(ws, design: Design, response, continuous, categorical, interacti
         new[name] = values
     used = [response] + continuous + categorical
     extended = Worksheet("points", pd.concat([ws.df[used].iloc[design.rows], pd.DataFrame(new)], ignore_index=True))
-    extended.value_orders = ws.value_orders   # same reference levels as the fitted model
+    extended.value_orders = dict(design.levels)   # code the points with the fitted model's levels
     return build_design(extended, [response], continuous, categorical, interactions, coding).X.iloc[-len(points):]
 
 
