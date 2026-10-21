@@ -1,11 +1,14 @@
 import pandas as pd
 import pytest
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QInputDialog
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QInputDialog, QToolBar
 
 from openstat.core.formatting import MISSING, make_rule
 from openstat.core.result import Result
 from openstat.core.worksheet import Worksheet, changed_parts
+from openstat.i18n import tr
 
 
 @pytest.fixture
@@ -79,7 +82,7 @@ def test_undo_history_is_per_worksheet(window):
 
 
 def test_typing_in_a_cell_opens_the_editor_and_records_a_step(window):
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QItemSelectionModel, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QTableView
 
@@ -95,3 +98,54 @@ def test_typing_in_a_cell_opens_the_editor_and_records_a_step(window):
 def test_no_step_when_nothing_changed(window):
     window.current_view().model_.setData(window.current_view().model_.index(0, 0), "1")   # same value
     assert window.current_view().undo_stack.count() == 0
+
+
+def test_delete_key_deletes_and_shifts_up(window):
+    view = window.current_view(); view.setCurrentIndex(view.model_.index(0, 0))
+    QTest.keyClick(view, Qt.Key_Delete)
+    assert view.ws.df["A"].tolist()[:3] == [2.0, 3.0, 4.0] and view.undo_stack.undoText() == tr("Delete Cells")
+
+
+def test_backspace_clears_in_place(window):
+    view = window.current_view(); view.setCurrentIndex(view.model_.index(0, 0))
+    QTest.keyClick(view, Qt.Key_Backspace)
+    assert pd.isna(view.ws.df["A"][0]) and view.ws.df["A"][1] == 2.0 and view.undo_stack.undoText() == tr("Clear Cells")
+
+
+def test_whole_column_selected_delete_removes_column(window):
+    view = window.current_view(); view.selectColumn(0); view.delete_selection()
+    assert view.ws.column_names() == ["B"]
+
+
+def test_whole_row_selected_delete_removes_row(window):
+    view = window.current_view(); view.selectRow(0); view.delete_selection()
+    assert view.ws.nrows == 3
+
+
+def test_cut_is_one_step_and_fills_clipboard(window):
+    view = window.current_view(); view.setCurrentIndex(view.model_.index(0, 1)); view.cut()
+    assert QGuiApplication.clipboard().text() == "2" and view.undo_stack.count() == 1
+    view.undo_stack.undo(); assert view.ws.df["B"][0] == 2.0
+
+
+def test_insert_rows_and_columns_from_selection(window):
+    view = window.current_view()
+    view.selectionModel().select(view.model_.index(1, 0), QItemSelectionModel.ClearAndSelect)
+    view.selectionModel().select(view.model_.index(2, 0), QItemSelectionModel.Select)
+    view.insert_rows(); assert view.ws.nrows == 6
+    view.selectColumn(0); view.insert_columns()
+    assert view.ws.column_names()[1] == "A" and view.undo_stack.count() == 2
+
+
+def test_move_columns_dialog(window, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    from openstat.ui.worksheet_view import MoveColumnsDialog
+    view = window.current_view(); view.selectColumn(0)
+    monkeypatch.setattr(MoveColumnsDialog, "exec", lambda self: (self.where.setCurrentIndex(1), QDialog.Accepted)[1])
+    view.move_columns()
+    assert view.ws.column_names() == ["B", "A"] and view.undo_stack.undoText() == tr("Move Columns")
+
+
+def test_edit_menu_and_toolbar_exist(window):
+    titles = [a.text() for a in window.menuBar().actions()]
+    assert titles[1] == tr("Edit") and window.findChild(QToolBar) is not None

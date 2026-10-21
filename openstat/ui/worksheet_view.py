@@ -5,8 +5,8 @@ from typing import Callable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QUndoStack
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QInputDialog, QLineEdit, QMenu,
-                               QMessageBox, QTableView)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QInputDialog, QLineEdit, QListWidget,
+                               QListWidgetItem, QMenu, QMessageBox, QTableView)
 
 from openstat.core.formatting import COLORS, RULES, column_colors, make_rule
 from openstat.core.worksheet import Worksheet, changed_parts
@@ -41,6 +41,36 @@ class FormatDialog(QDialog):
 
     def rule(self) -> dict:
         return make_rule(self.kind.currentData(), self.value.text(), self.color.currentData())
+
+
+class MoveColumnsDialog(QDialog):
+    """Asks which columns to move and where."""
+
+    def __init__(self, columns: list[str], selected: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Move Columns"))
+        self.columns = QListWidget()
+        for name in columns:
+            item = QListWidgetItem(name, self.columns)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if name in selected else Qt.Unchecked)
+        self.where, self.anchor = QComboBox(), QComboBox()
+        for key, label in (("start", "Start"), ("end", "End"), ("before", "Before"), ("after", "After")):
+            self.where.addItem(tr(label), key)
+        self.anchor.addItems(columns)
+        form = QFormLayout(self)
+        form.addRow(tr("Columns") + ":", self.columns)
+        form.addRow(tr("Move to") + ":", self.where)
+        form.addRow(tr("Column") + ":", self.anchor)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def names(self) -> list[str]:
+        return [i.text() for i in map(self.columns.item, range(self.columns.count())) if i.checkState() == Qt.Checked]
 
 
 class WorksheetModel(QAbstractTableModel):
@@ -169,7 +199,12 @@ class WorksheetView(QTableView):
             return
         name = self.ws.df.columns[section]
         menu = QMenu(self)
+        if not self.selectionModel().isColumnSelected(section):
+            self.selectColumn(section)
         menu.addAction(tr("Rename column") + "...", lambda: self.rename_column(section))
+        menu.addAction(tr("Insert Columns"), self.insert_columns)
+        menu.addAction(tr("Delete Columns"), self.delete_selection)
+        menu.addAction(tr("Move Columns") + "...", self.move_columns)
         menu.addAction(tr("Conditional Formatting") + "...", lambda: self.add_format(name))
         clear = menu.addAction(tr("Clear Conditional Formatting"), lambda: self.set_formats(name, []))
         clear.setEnabled(name in self.ws.formats)
@@ -209,15 +244,73 @@ class WorksheetView(QTableView):
         self.refresh()
 
     def keyPressEvent(self, event):
+        editing = self.state() == QTableView.EditingState
         if event.matches(QKeySequence.Copy):
             self.copy_selection()
+        elif event.matches(QKeySequence.Cut):
+            self.cut()
         elif event.matches(QKeySequence.Paste):
             self.paste()
-        elif event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.state() != QTableView.EditingState:
-            self.model_.set_cells([(i.row(), i.column(), "") for i in self.selectedIndexes()])
+        elif event.key() == Qt.Key_Delete and not editing:
+            self.delete_selection()
+        elif event.key() == Qt.Key_Backspace and not editing:
+            self.clear_selection()
         else:
             super().keyPressEvent(event)
 
+    def _cells(self) -> list[tuple[int, int]]:
+        return [(i.row(), i.column()) for i in self.selectedIndexes()]
+
+    def _apply(self, text: str, action: Callable[[], object]) -> None:
+        self.change(text, action)
+        self.refresh()
+
+    def cut(self) -> None:
+        def apply():
+            self.copy_selection()
+            self.delete_selection()
+        self._apply("Cut", apply)
+
+    def delete_selection(self) -> None:
+        cells = self._cells()
+        rows, cols = sorted({r for r, _ in cells}), sorted({c for _, c in cells})
+        chosen = self.selectionModel()
+        if cols and all(chosen.isColumnSelected(c) for c in cols):
+            self._apply("Delete Cells", lambda: self.ws.delete_columns(cols))
+        elif rows and all(chosen.isRowSelected(r) for r in rows):
+            self._apply("Delete Cells", lambda: self.ws.delete_rows(rows))
+        else:
+            self._apply("Delete Cells", lambda: self.ws.delete_cells(cells))
+
+    def clear_selection(self) -> None:
+        cells = self._cells()
+        self._apply("Clear Cells", lambda: self.ws.clear_cells(cells))
+
+    def insert_cells(self) -> None:
+        cells = self._cells()
+        self._apply("Insert Cells", lambda: self.ws.insert_cells(cells))
+
+    def insert_rows(self) -> None:
+        rows = sorted({r for r, _ in self._cells()})
+        if rows:
+            self._apply("Insert Rows", lambda: self.ws.insert_rows(rows[0], len(rows)))
+
+    def insert_columns(self) -> None:
+        cols = sorted({c for _, c in self._cells()})
+        if cols:
+            self._apply("Insert Columns", lambda: self.ws.insert_columns(cols[0], len(cols)))
+
+    def move_columns(self) -> None:
+        names = list(self.ws.df.columns)
+        picked = {c for _, c in self._cells() if c < len(names)}
+        dialog = MoveColumnsDialog(names, [names[c] for c in picked], self)
+        if dialog.exec() != QDialog.Accepted or not dialog.names():
+            return
+        try:
+            self._apply("Move Columns", lambda: self.ws.move_columns(
+                dialog.names(), dialog.where.currentData(), dialog.anchor.currentText()))
+        except ValueError as exc:
+            QMessageBox.warning(self, tr("Error"), tr(str(exc)))
     def copy_selection(self) -> None:
         indexes = self.selectedIndexes()
         if not indexes:

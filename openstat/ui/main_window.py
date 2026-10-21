@@ -8,7 +8,7 @@ from PySide6.QtGui import (QAction, QColor, QDesktopServices, QIcon, QKeySequenc
                            QUndoGroup)
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDockWidget, QFileDialog, QFormLayout,
                                QInputDialog, QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-                               QSplitter, QTabWidget)
+                               QSplitter, QStyle, QTabWidget, QToolBar)
 
 from openstat import __version__
 from openstat.core import io, registry
@@ -123,8 +123,8 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu(tr("File"))
         self._action(file_menu, "New Project", self.new_project, QKeySequence.New)
         self._action(file_menu, "New Worksheet", self.new_worksheet)
-        self._action(file_menu, "Open Project...", self.open_project, QKeySequence.Open)
-        self._action(file_menu, "Save Project", self.save_project, QKeySequence.Save)
+        open_action = self._action(file_menu, "Open Project...", self.open_project, QKeySequence.Open)
+        save_action = self._action(file_menu, "Save Project", self.save_project, QKeySequence.Save)
         self._action(file_menu, "Save Project As...", self.save_project_as)
         file_menu.addSeparator()
         self._action(file_menu, "Import Data...", self.import_data)
@@ -148,6 +148,39 @@ class MainWindow(QMainWindow):
         redo = self.undo_group.createRedoAction(self, tr("Redo"))
         redo.setShortcut("Ctrl+Y")
         edit_menu.addActions([undo, redo])
+        edit_menu.addSeparator()
+        # grid shortcuts live on the tabs, so they do not fire while another pane has the focus
+        def grid(text, method, shortcut=None):
+            action = self._action(edit_menu, text, lambda: getattr(self.current_view(), method)(), shortcut)
+            action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            self.tabs.addAction(action)
+            return action
+        cut, copy, paste = grid("Cut", "cut", QKeySequence.Cut), grid("Copy", "copy_selection", QKeySequence.Copy),             grid("Paste", "paste", QKeySequence.Paste)
+        edit_menu.addSeparator()
+        grid("Delete Cells", "delete_selection", QKeySequence.Delete)
+        grid("Clear Cells", "clear_selection")
+        grid("Select All", "selectAll", QKeySequence.SelectAll)
+        edit_menu.addSeparator()
+        inserts = [grid("Insert Cells", "insert_cells"), grid("Insert Rows", "insert_rows"),
+                   grid("Insert Columns", "insert_columns")]
+        move = grid("Move Columns", "move_columns")
+        move.setText(move.text() + "...")
+
+        toolbar = self.addToolBar(tr("Standard"))
+        toolbar.setObjectName("Standard")
+        style = self.style()
+        icons = [(open_action, QStyle.SP_DialogOpenButton), (save_action, QStyle.SP_DialogSaveButton), None,
+                 (cut, QStyle.SP_FileIcon), (copy, QStyle.SP_FileLinkIcon), (paste, QStyle.SP_DialogApplyButton), None,
+                 (undo, QStyle.SP_ArrowBack), (redo, QStyle.SP_ArrowForward), None,
+                 (inserts[0], QStyle.SP_FileDialogNewFolder), (inserts[1], QStyle.SP_ArrowDown),
+                 (inserts[2], QStyle.SP_ArrowRight), (move, QStyle.SP_FileDialogDetailedView)]
+        for entry in icons:
+            if entry is None:
+                toolbar.addSeparator()
+                continue
+            action, fallback = entry
+            action.setIcon(style.standardIcon(fallback))
+            toolbar.addAction(action)
 
         assistant_menu = bar.addMenu(tr("Assistant"))
         self._action(assistant_menu, "Choose an Analysis...", self.open_assistant)

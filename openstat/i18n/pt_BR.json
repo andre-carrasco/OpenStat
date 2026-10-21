@@ -1825,5 +1825,21 @@
   "Redo": "Refazer",
   "Typing": "Digitação",
   "Paste": "Colar",
-  "Choose a column that is not being moved": "Escolha uma coluna que não esteja sendo movida"
+  "Choose a column that is not being moved": "Escolha uma coluna que não esteja sendo movida",
+  "Cut": "Recortar",
+  "Copy": "Copiar",
+  "Delete Cells": "Excluir células",
+  "Clear Cells": "Limpar células",
+  "Select All": "Selecionar tudo",
+  "Insert Cells": "Inserir células",
+  "Insert Rows": "Inserir linhas",
+  "Insert Columns": "Inserir colunas",
+  "Move Columns": "Mover colunas",
+  "Delete Columns": "Excluir colunas",
+  "Start": "Início",
+  "End": "Fim",
+  "Before": "Antes de",
+  "After": "Depois de",
+  "Standard": "Padrão",
+  "Move to": "Mover para"
 }
