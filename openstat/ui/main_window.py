@@ -4,7 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPdfWriter, QPixmap
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPdfWriter, QPixmap,
+                           QUndoGroup)
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDockWidget, QFileDialog, QFormLayout,
                                QInputDialog, QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QSplitter, QTabWidget)
@@ -83,6 +84,9 @@ class MainWindow(QMainWindow):
         self.output = OutputView()
         self.tabs = QTabWidget()
         self.tabs.tabBarDoubleClicked.connect(self.rename_worksheet)
+        self.undo_group = QUndoGroup(self)
+        self.tabs.currentChanged.connect(
+            lambda i: self.undo_group.setActiveStack(self.tabs.widget(i).undo_stack if i >= 0 else None))
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(self.output)
         splitter.addWidget(self.tabs)
@@ -138,6 +142,13 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self._action(file_menu, "Exit", self.close)
 
+        edit_menu = bar.addMenu(tr("Edit"))
+        undo = self.undo_group.createUndoAction(self, tr("Undo"))
+        undo.setShortcut(QKeySequence.Undo)
+        redo = self.undo_group.createRedoAction(self, tr("Redo"))
+        redo.setShortcut("Ctrl+Y")
+        edit_menu.addActions([undo, redo])
+
         assistant_menu = bar.addMenu(tr("Assistant"))
         self._action(assistant_menu, "Choose an Analysis...", self.open_assistant)
         self._action(assistant_menu, "Graph Builder...", self.open_graph_builder)
@@ -183,6 +194,8 @@ class MainWindow(QMainWindow):
         if not project.worksheets:
             project.new_worksheet()
         self.tabs.clear()
+        for stack in self.undo_group.stacks():   # the tabs are made anew, with empty histories
+            self.undo_group.removeStack(stack)
         for ws in project.worksheets:
             self._add_tab(ws)
         self._refresh_output()
@@ -192,6 +205,8 @@ class MainWindow(QMainWindow):
     def _add_tab(self, ws: Worksheet) -> None:
         view = WorksheetView(ws)
         view.model_.modelReset.connect(self.mark_dirty)
+        view.undo_stack.indexChanged.connect(self.mark_dirty)
+        self.undo_group.addStack(view.undo_stack)
         self.tabs.addTab(view, ws.name)
 
     def mark_dirty(self) -> None:
@@ -399,6 +414,9 @@ class MainWindow(QMainWindow):
     def current_worksheet(self) -> Worksheet:
         return self.current_view().ws
 
+    def view_of(self, ws: Worksheet) -> WorksheetView:
+        return next(view for view in map(self.tabs.widget, range(self.tabs.count())) if view.ws is ws)
+
     def run_analysis(self, a: registry.Analysis, initial: dict | None = None) -> None:
         ws = self.current_worksheet()
         if ws.ncols == 0 and any(p.kind in ("column", "columns") for p in a.params):
@@ -415,11 +433,13 @@ class MainWindow(QMainWindow):
         self._guarded(run)
 
     def add_result(self, result: Result, ws: Worksheet) -> None:
-        for name, values in result.stored.items():
-            ws.add_column(name, values)
-        for name, expression in result.formulas.items():
-            ws.set_formula(name, expression)
+        def store():
+            for name, values in result.stored.items():
+                ws.add_column(name, values)
+            for name, expression in result.formulas.items():
+                ws.set_formula(name, expression)
         if result.stored or result.formulas:
+            self.view_of(ws).edit(result.title, store)
             self.worksheets_changed()
         for name, df in result.worksheets:
             self.add_worksheet(Worksheet(name, df))

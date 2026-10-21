@@ -111,14 +111,17 @@ class Console(QWidget):
         ws = self.window_.current_worksheet()
         self.namespace["ws"], self.namespace["df"] = ws, ws.df
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-            action()
+
+        def apply():
+            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                action()
+            new_df = self.namespace.get("df")
+            if isinstance(new_df, pd.DataFrame):
+                ws.df = normalize_frame(new_df)   # whatever the command produced, in worksheet form
+                ws.recalculate()
+        self.window_.view_of(ws).edit("Command Line", apply)
         output = buffer.getvalue().rstrip()
         if output:
             self.log.appendPlainText(output)
-        new_df = self.namespace.get("df")
-        if isinstance(new_df, pd.DataFrame):
-            ws.df = normalize_frame(new_df)   # whatever the command produced, in worksheet form
-            ws.recalculate()
         self.window_.worksheets_changed()
         return output

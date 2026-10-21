@@ -1819,5 +1819,10 @@
   "What stage are you at?": "Em que etapa você está?",
   "What will the data be used for?": "Para que os dados serão usados?",
   "Yellow": "Amarelo",
-  "Yes, the same items were measured twice": "Sim, os mesmos itens foram medidos duas vezes"
+  "Yes, the same items were measured twice": "Sim, os mesmos itens foram medidos duas vezes",
+  "Edit": "Editar",
+  "Undo": "Desfazer",
+  "Redo": "Refazer",
+  "Typing": "Digitação",
+  "Paste": "Colar"
 }

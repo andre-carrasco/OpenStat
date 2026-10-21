@@ -1,14 +1,17 @@
 """Editable grid over a Worksheet."""
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence
+from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QInputDialog, QLineEdit, QMenu,
                                QMessageBox, QTableView)
 
 from openstat.core.formatting import COLORS, RULES, column_colors, make_rule
-from openstat.core.worksheet import Worksheet
+from openstat.core.worksheet import Worksheet, changed_parts
 from openstat.i18n import tr
+from openstat.ui.undo import SnapshotCommand
 
 EXTRA_ROWS = 100
 EXTRA_COLS = 20
@@ -41,9 +44,10 @@ class FormatDialog(QDialog):
 
 
 class WorksheetModel(QAbstractTableModel):
-    def __init__(self, worksheet: Worksheet, parent=None):
+    def __init__(self, worksheet: Worksheet, edit: Callable, parent=None):
         super().__init__(parent)
         self.ws = worksheet
+        self.edit = edit   # WorksheetView.edit, which makes each change one undo step
         self._colors: dict[str, list] = {}   # conditional formatting of each column, until the next change
         self.modelAboutToBeReset.connect(lambda: self._colors.clear())
 
@@ -110,11 +114,12 @@ class WorksheetModel(QAbstractTableModel):
         self.set_cells([(index.row(), index.column(), value)])
         return True
 
-    def set_cells(self, cells) -> None:
-        self.beginResetModel()
-        for row, col, text in cells:
-            self.ws.set_cell(row, col, text)
-        self.endResetModel()
+    def set_cells(self, cells, text: str = "Typing") -> None:
+        def apply():
+            for row, col, value in cells:
+                self.ws.set_cell(row, col, value)
+        self.edit(text, apply)
+        self.refresh()
 
     def refresh(self) -> None:
         self.beginResetModel()
@@ -125,7 +130,10 @@ class WorksheetView(QTableView):
     def __init__(self, worksheet: Worksheet, parent=None):
         super().__init__(parent)
         self.ws = worksheet
-        self.model_ = WorksheetModel(worksheet, self)
+        self.undo_stack = QUndoStack(self)
+        self.undo_stack.setUndoLimit(50)
+        self._editing = False
+        self.model_ = WorksheetModel(worksheet, self.edit, self)
         self.setModel(self.model_)
         self.horizontalHeader().setDefaultSectionSize(90)
         self.verticalHeader().setDefaultSectionSize(22)
@@ -135,6 +143,27 @@ class WorksheetView(QTableView):
 
     def refresh(self) -> None:
         self.model_.refresh()
+
+    def edit(self, text: str, action: Callable[[], object], *qt_args) -> object:
+        """Run `action` as one undo step named `text`; a call inside another joins the outer step."""
+        if isinstance(text, QModelIndex):   # Qt's own edit(index, trigger, event), which opens the cell editor
+            return super().edit(text, action, *qt_args)
+        if self._editing:
+            return action()
+        before = self.ws.snapshot()
+        self._editing = True
+        try:
+            result = action()
+        except Exception:
+            self.ws.restore(before)
+            self.refresh()
+            raise
+        finally:
+            self._editing = False
+        old, new = changed_parts(before, self.ws.snapshot())
+        if old["data"] or new["data"] or old != new:
+            self.undo_stack.push(SnapshotCommand(self, tr(text), old, new))
+        return result
 
     def _header_menu(self, position) -> None:
         section = self.horizontalHeader().logicalIndexAt(position)
@@ -159,20 +188,24 @@ class WorksheetView(QTableView):
             self.set_formats(name, self.ws.formats.get(name, []) + [rule])
 
     def set_formats(self, name: str, rules: list[dict]) -> None:
-        if rules:
-            self.ws.formats[name] = rules
-        else:
-            self.ws.formats.pop(name, None)
+        def apply():
+            if rules:
+                self.ws.formats[name] = rules
+            else:
+                self.ws.formats.pop(name, None)
+        self.edit("Conditional Formatting", apply)
         self.refresh()
 
     def rename_column(self, section: int) -> None:
-        if section >= self.ws.ncols:
-            self.ws.ensure_size(self.ws.nrows, section + 1)
-        current = self.ws.df.columns[section]
+        current = self.ws.df.columns[section] if section < self.ws.ncols else f"C{section + 1}"
         name, ok = QInputDialog.getText(self, tr("Rename column"), tr("Column name:"), text=current)
         if ok:
-            try:
+            def apply():
+                if section >= self.ws.ncols:
+                    self.ws.ensure_size(self.ws.nrows, section + 1)
                 self.ws.rename_column(section, name)
+            try:
+                self.edit("Rename column", apply)
             except ValueError as exc:
                 QMessageBox.warning(self, tr("Error"), str(exc))
         self.refresh()
@@ -205,4 +238,4 @@ class WorksheetView(QTableView):
         for dr, line in enumerate(text.rstrip("\n").split("\n")):
             for dc, value in enumerate(line.rstrip("\r").split("\t")):
                 cells.append((start.row() + dr, start.column() + dc, value))
-        self.model_.set_cells(cells)
+        self.model_.set_cells(cells, "Paste")
