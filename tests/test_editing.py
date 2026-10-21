@@ -110,3 +110,19 @@ def test_levels_occurrence_and_user_order():
     ws.value_orders["T"] = ["c", "z", "a"]
     assert ws.levels("T") == ["c", "a", "b"]   # z missing, b new at end
     assert ws.levels("T", pd.Series(["a", "c"])) == ["c", "a"]
+
+
+def test_levels_are_distinct():
+    ws = Worksheet("W", pd.DataFrame({"N": [1.00000000001, 1.00000000002, 2.0], "T": ["a", "b", "a"]}))
+    assert ws.levels("N") == ["1", "2"]
+    ws.value_orders["N"] = "occurrence"
+    assert ws.levels("N") == ["1", "2"]
+    ws.value_orders["T"] = ["b", "b", "a"]
+    assert ws.levels("T") == ["b", "a"]
+
+
+def test_levels_label_missing_from_column_goes_last():
+    ws = Worksheet("W", pd.DataFrame({"T": ["b", "a"]}))
+    assert ws.levels("T", pd.Series(["z", "a", "y"])) == ["a", "y", "z"]
+    ws.value_orders["T"] = "occurrence"
+    assert ws.levels("T", pd.Series(["z", "a", "b", "y"])) == ["b", "a", "y", "z"]

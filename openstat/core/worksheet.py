@@ -347,7 +347,7 @@ class Worksheet:
         return self.df[name].dropna()
 
     def levels(self, name: str, labels: pd.Series | None = None) -> list[str]:
-        """Distinct formatted values of `labels` (default: the column) in the column's value order."""
+        """Distinct values of `labels` (already formatted strings; default: the column) in the column's value order."""
         col = self.df[name].dropna()
         if labels is None:
             labels = col
@@ -361,4 +361,5 @@ class Worksheet:
             ranked = [format_value(v) for v in sorted(col.unique())]
         else:
             ranked = sorted({format_value(v) for v in col})   # dates: ISO text is chronological
+        ranked = list(dict.fromkeys(ranked))   # distinct labels: .10g can collapse floats, user lists can repeat
         return [v for v in ranked if v in present] + sorted(present - set(ranked))
