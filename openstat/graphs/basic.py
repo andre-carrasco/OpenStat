@@ -219,9 +219,10 @@ BAR_FUNCTIONS = ["Count", "Mean", "Sum"]
 
 def _category_values(ws, category, function, value):
     if function == "Count" or not value:
-        return ws.df[category].dropna().map(format_value).value_counts(sort=False).sort_index()
+        counts = ws.df[category].dropna().map(format_value).value_counts(sort=False)
+        return counts.reindex(ws.levels(category))
     grouped = ws.df.groupby(ws.df[category].map(format_value))[value]
-    return grouped.mean() if function == "Mean" else grouped.sum()
+    return (grouped.mean() if function == "Mean" else grouped.sum()).reindex(ws.levels(category))
 
 
 @analysis("graph.bar", menu=MENU, title="Bar Chart",

@@ -32,8 +32,12 @@ def _frame(ws, part, operator, measurement) -> pd.DataFrame:
     frame = ws.df[[part, operator, measurement]].dropna()
     out = pd.DataFrame({"part": frame[part].map(format_value), "operator": frame[operator].map(format_value),
                         "y": frame[measurement].astype(float)})
-    out.attrs = {"parts": ws.levels(part, out["part"]), "operators": ws.levels(operator, out["operator"])}   # value order
     return out
+
+
+def _orders(ws, frame, part, operator) -> dict:
+    """The parts and operators of a `_frame` in the value order of their columns."""
+    return {"parts": ws.levels(part, frame["part"]), "operators": ws.levels(operator, frame["operator"])}
 
 
 def crossed_anova(frame: pd.DataFrame, alpha_interaction: float = 0.05) -> dict:
@@ -113,7 +117,7 @@ def gage_tables(components: dict, multiplier=6.0, tolerance=None) -> tuple[pd.Da
     return table, ndc
 
 
-def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: bool):
+def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: bool, parts=None, operators=None):
     fig = new_figure(10.0, 7.0)
     (a, b), (c, d) = fig.subplots(2, 2)
     main = table.loc[["Total Gage R&R", "  Repeatability", "  Reproducibility", "Part-To-Part"]]
@@ -122,12 +126,12 @@ def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: 
     a.bar(pos + 0.2, main["% Study Var"], 0.4, color="#ed7d31", label=tr("% Study Var"))
     a.set_xticks(pos, [tr(s.strip()) for s in main.index], fontsize=7)
     a.set_title(tr("Components of Variation"), fontsize=9), a.legend(fontsize=7)
-    parts = frame.attrs.get("parts") or sorted(frame["part"].unique())
+    parts = parts or sorted(frame["part"].unique())
     b.plot([parts.index(v) for v in frame["part"]], frame["y"], "o", color=GRAY, markersize=3)
     b.plot(range(len(parts)), frame.groupby("part")["y"].mean().reindex(parts), "-o", color=BLUE)
     b.set_xticks(range(len(parts)), parts, fontsize=7, rotation=45 if len(parts) > 10 else 0)
     b.set_title(tr("Measurement by Part"), fontsize=9)
-    operators = frame.attrs.get("operators") or sorted(frame["operator"].unique())
+    operators = operators or sorted(frame["operator"].unique())
     c.boxplot([frame["y"][frame["operator"] == o] for o in operators], tick_labels=operators)
     c.set_title(tr("Measurement by Operator"), fontsize=9)
     if crossed:
@@ -146,14 +150,14 @@ def _gage_figure(frame: pd.DataFrame, table: pd.DataFrame, title: str, crossed: 
     return fig
 
 
-def _gage_report(res: Result, frame, components, multiplier, tolerance, measurement, crossed) -> Result:
+def _gage_report(res: Result, frame, components, multiplier, tolerance, measurement, crossed, orders) -> Result:
     table, ndc = gage_tables(components, multiplier, optional_number(tolerance))
     shown = table.copy()
     shown.index = pd.Index([s.replace(s.strip(), tr(s.strip())) for s in table.index], name="Source")
     res.table(shown[["VarComp", "% Contribution"]], title="Variance Components")
     res.table(shown.drop(columns=["VarComp", "% Contribution"]), title="Gage Evaluation")
     res.text(f"{tr('Number of distinct categories')} = {ndc}")
-    return res.figure(_gage_figure(frame, table, f"{tr('Gage R&R')}: {measurement}", crossed))
+    return res.figure(_gage_figure(frame, table, f"{tr('Gage R&R')}: {measurement}", crossed, **orders))
 
 
 @analysis("gage.crossed", menu=MENU, title="Gage R&R Study (Crossed)",
@@ -170,7 +174,7 @@ def gage_crossed(ws, part, operator, measurement, tolerance="", multiplier=6.0):
     res.table(anova, title=title)
     if not out["with_interaction"]:
         res.text(f"{tr('The interaction was removed from the model')} (P = {out['p_interaction']:.3f} > 0.05).")
-    return _gage_report(res, frame, out["components"], multiplier, tolerance, measurement, True)
+    return _gage_report(res, frame, out["components"], multiplier, tolerance, measurement, True, _orders(ws, frame, part, operator))
 
 
 @analysis("gage.nested", menu=MENU, title="Gage R&R Study (Nested)",
@@ -187,7 +191,7 @@ def gage_nested(ws, part, operator, measurement, tolerance="", multiplier=6.0):
         res.text(tr("The design is unbalanced; variance components are approximate."))
     comps = table["Variance component"].to_numpy()
     components = {"repeatability": comps[2], "operator": comps[0], "interaction": 0.0, "part": comps[1]}
-    return _gage_report(res, frame, components, multiplier, tolerance, measurement, False)
+    return _gage_report(res, frame, components, multiplier, tolerance, measurement, False, _orders(ws, frame, part, operator))
 
 
 @analysis("gage.expanded", menu=MENU, title="Gage R&R Study (Expanded)",
@@ -229,7 +233,8 @@ def gage_expanded(ws, part, operator, measurement, extra, tolerance="", multipli
 @analysis("gage.run_chart", menu=MENU, title="Gage Run Chart", params=[PART, OPERATOR, MEASUREMENT])
 def gage_run_chart(ws, part, operator, measurement):
     frame = _frame(ws, part, operator, measurement)
-    parts, operators = frame.attrs["parts"], frame.attrs["operators"]
+    orders = _orders(ws, frame, part, operator)
+    parts, operators = orders["parts"], orders["operators"]
     columns = min(5, len(parts))
     rows = int(np.ceil(len(parts) / columns))
     fig = new_figure(2.2 * columns + 1.0, 2.4 * rows + 0.8)

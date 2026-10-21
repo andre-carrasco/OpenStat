@@ -22,11 +22,7 @@ def tally(ws, columns):
     res = Result("Tally Individual Variables")
     for name in columns:
         col = ws.df[name]
-        counts = col.dropna().map(format_value).value_counts(sort=False)
-        try:
-            counts = counts.loc[sorted(counts.index, key=float)]
-        except ValueError:
-            counts = counts.sort_index()
+        counts = col.dropna().map(format_value).value_counts(sort=False).loc[ws.levels(name)]
         table = pd.DataFrame({"Count": counts, "Percent": 100 * counts / counts.sum()})
         table["CumCnt"] = table["Count"].cumsum()
         table["CumPct"] = table["Percent"].cumsum()
@@ -145,7 +141,7 @@ def _two_levels(col: pd.Series, name: str) -> pd.Series:
 def mcnemar(ws, first, second, confidence=95.0):
     frame = ws.df[[first, second]].dropna()
     a, b = _two_levels(frame[first], first), _two_levels(frame[second], second)
-    levels_a, levels_b = ordered(a.unique()), ordered(b.unique())
+    levels_a, levels_b = ws.levels(first, a), ws.levels(second, b)
     table = pd.crosstab(a, b).reindex(index=levels_a, columns=levels_b, fill_value=0)
     table.index.name, table.columns.name = first, second
     n = int(table.to_numpy().sum())
@@ -174,10 +170,10 @@ def mcnemar(ws, first, second, confidence=95.0):
 def cochran_mantel_haenszel(ws, rows, cols, layers, confidence=95.0):
     frame = ws.df[[rows, cols, layers]].dropna()
     a, b = _two_levels(frame[rows], rows), _two_levels(frame[cols], cols)
-    levels_a, levels_b = ordered(a.unique()), ordered(b.unique())
+    levels_a, levels_b = ws.levels(rows, a), ws.levels(cols, b)
     strata = frame[layers].map(format_value)
     tables, odds = [], {}
-    for layer in ordered(strata.unique()):
+    for layer in ws.levels(layers, strata):
         inside = (strata == layer).to_numpy()
         table = pd.crosstab(a[inside], b[inside]).reindex(index=levels_a, columns=levels_b, fill_value=0).to_numpy()
         if table.sum() < 2:
@@ -225,9 +221,9 @@ def describe_table(ws, rows, variable, cols=None, statistic="Mean"):
     grouped = frame[variable].astype(float).groupby(labels).agg(TABLE_STATISTICS[statistic])
     if cols:
         table = grouped.unstack()
-        table = table.loc[ordered(table.index), ordered(table.columns)]
+        table = table.loc[ws.levels(rows, labels[0]), ws.levels(cols, labels[1])]
     else:
-        table = grouped.loc[ordered(grouped.index)].to_frame(statistic)
+        table = grouped.loc[ws.levels(rows, labels[0])].to_frame(statistic)
     res = Result("Table of Descriptive Statistics")
     res.text(f"{tr(statistic)}: {variable}    {tr('Rows')}: {rows}" + (f"    {tr('Columns')}: {cols}" if cols else ""))
     return res.table(_named(table, rows))

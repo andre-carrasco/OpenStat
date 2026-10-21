@@ -47,3 +47,15 @@ def test_numeric_factor_in_numeric_order():
     ws = Worksheet("N", pd.DataFrame({"y": [float(i) for i in range(30)], "f": [1, 2, 10] * 10}))
     means = next(t for t in tables_of(anova.one_way(ws, "y", "f")) if "Mean" in t.columns)
     assert list(means.index) == ["1", "2", "10"]
+
+
+def test_bar_chart_follows_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = REVERSED
+    assert list(graphs_basic._category_values(sample_ws, "Group", "Count", None).index) == REVERSED
+    assert list(graphs_basic._category_values(sample_ws, "Group", "Mean", "Y").index) == REVERSED
+
+
+def test_tally_and_describe_table_follow_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = REVERSED
+    assert list(tables_of(tables.tally(sample_ws, ["Group"]))[0].index) == REVERSED
+    assert list(tables_of(tables.describe_table(sample_ws, "Group", "Y"))[0].index) == REVERSED
