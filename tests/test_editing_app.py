@@ -3,7 +3,7 @@ import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QInputDialog, QToolBar
+from PySide6.QtWidgets import QInputDialog, QTableView, QToolBar
 
 from openstat.core.formatting import MISSING, make_rule
 from openstat.core.result import Result
@@ -82,8 +82,6 @@ def test_undo_history_is_per_worksheet(window):
 
 
 def test_typing_in_a_cell_opens_the_editor_and_records_a_step(window):
-    from PySide6.QtCore import QItemSelectionModel, Qt
-    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QTableView
 
     view = window.current_view(); window.show()
@@ -149,3 +147,27 @@ def test_move_columns_dialog(window, monkeypatch):
 def test_edit_menu_and_toolbar_exist(window):
     titles = [a.text() for a in window.menuBar().actions()]
     assert titles[1] == tr("Edit") and window.findChild(QToolBar) is not None
+
+
+def test_shortcuts_fire_once_and_not_while_editing(window):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    view = window.current_view(); window.show(); view.setFocus(); QApplication.processEvents()
+    view.setCurrentIndex(view.model_.index(0, 1))
+    QTest.keyClick(view, Qt.Key_X, Qt.ControlModifier)
+    assert QGuiApplication.clipboard().text() == "2" and view.undo_stack.count() == 1
+    view.setCurrentIndex(view.model_.index(0, 0))
+    QTest.keyClick(view, Qt.Key_Delete)
+    assert view.undo_stack.count() == 2
+    view.setCurrentIndex(view.model_.index(1, 0))   # the reset after a change drops the current cell
+    before = view.ws.snapshot()
+    QTest.keyClick(view, Qt.Key_F2); assert view.state() == QTableView.EditingState
+    QTest.keyClick(view.indexWidget(view.currentIndex()), Qt.Key_Delete)
+    QTest.keyClick(view.indexWidget(view.currentIndex()), Qt.Key_Backspace)
+    assert view.undo_stack.count() == 2 and same_state(before, view.ws.snapshot())
+
+
+def test_select_all_delete_clears_everything_without_error(window):
+    view = window.current_view(); view.selectAll(); view.delete_selection()
+    assert view.ws.ncols == 0 and view.undo_stack.count() == 1
+    view.undo_stack.undo(); assert view.ws.column_names() == ["A", "B"] and view.ws.nrows == 4

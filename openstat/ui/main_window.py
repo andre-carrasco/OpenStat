@@ -155,7 +155,9 @@ class MainWindow(QMainWindow):
             action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
             self.tabs.addAction(action)
             return action
-        cut, copy, paste = grid("Cut", "cut", QKeySequence.Cut), grid("Copy", "copy_selection", QKeySequence.Copy),             grid("Paste", "paste", QKeySequence.Paste)
+        cut = grid("Cut", "cut", QKeySequence.Cut)
+        copy = grid("Copy", "copy_selection", QKeySequence.Copy)
+        paste = grid("Paste", "paste", QKeySequence.Paste)
         edit_menu.addSeparator()
         grid("Delete Cells", "delete_selection", QKeySequence.Delete)
         grid("Clear Cells", "clear_selection")

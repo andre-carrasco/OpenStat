@@ -58,6 +58,9 @@ class MoveColumnsDialog(QDialog):
         for key, label in (("start", "Start"), ("end", "End"), ("before", "Before"), ("after", "After")):
             self.where.addItem(tr(label), key)
         self.anchor.addItems(columns)
+        self.where.currentIndexChanged.connect(
+            lambda: self.anchor.setEnabled(self.where.currentData() in ("before", "after")))
+        self.anchor.setEnabled(False)
         form = QFormLayout(self)
         form.addRow(tr("Columns") + ":", self.columns)
         form.addRow(tr("Move to") + ":", self.where)
