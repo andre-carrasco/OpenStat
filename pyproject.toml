@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openstat"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open-source statistical analysis desktop application"
 readme = "README.md"
 license = { text = "MIT" }

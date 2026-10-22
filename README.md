@@ -7,7 +7,7 @@ NumPy, SciPy, statsmodels, scikit-learn, lifelines, pyDOE3 e matplotlib.
 
 ## Baixar
 
-Para Windows, sem instalar Python: baixe o [OpenStat-0.2.0-windows.zip](https://github.com/andre-carrasco/OpenStat/releases/download/v0.2.0/OpenStat-0.2.0-windows.zip)
+Para Windows, sem instalar Python: baixe o [OpenStat-0.3.0-windows.zip](https://github.com/andre-carrasco/OpenStat/releases/download/v0.3.0/OpenStat-0.3.0-windows.zip)
 (todas as versões em [Releases](https://github.com/andre-carrasco/OpenStat/releases)), extraia e abra `OpenStat.exe`.
 O executável não é assinado, então o Windows pode pedir confirmação na primeira execução.
 
@@ -55,6 +55,15 @@ Importar de banco de dados** lê uma consulta SQL de um arquivo SQLite ou de uma
 (`pip install openstat[odbc]`). Itens selecionados no navegador podem ser exportados à parte, e
 notas podem ser acrescentadas à saída. **Ferramentas > Salvar sessão como script** grava as análises
 executadas como comandos `run(...)`, que **Executar script** repete.
+
+O menu **Editar** traz desfazer e refazer (Ctrl+Z, Ctrl+Y), com histórico separado por planilha. O
+desfazer cobre também as colunas gravadas pelas análises e os comandos do console. O menu tem ainda
+recortar, copiar e colar, e **Excluir células**: a tecla Delete remove as células e sobe as de baixo,
+como no Minitab, e **Limpar células** deixa as células em branco. Também há localizar e substituir
+(Ctrl+F, Ctrl+H), inserir células, linhas e colunas, e mover colunas. Em **Propriedades da coluna** a
+coluna ganha uma descrição e uma **ordem dos valores** (alfabética, de ocorrência ou definida pelo
+usuário). Essa ordem vale em tabelas, gráficos e modelos e define o evento da logística binária e o
+nível de referência dos fatores, que a saída sempre informa.
 
 As colunas são numéricas, de texto (`-T` no cabeçalho) ou de data/hora (`-D`). Datas são digitadas
 como `aaaa-mm-dd` ou `dd/mm/aaaa` (`mm/dd/aaaa` em inglês), com hora opcional. Uma coluna com fórmula
