@@ -966,12 +966,14 @@ def signal_to_noise(values: np.ndarray, kind: str) -> np.ndarray:
         return 10 * np.log10(np.nanmean(values, axis=1) ** 2 / np.nanvar(values, axis=1, ddof=1))
 
 
-def response_table(values: pd.Series, factors: pd.DataFrame) -> pd.DataFrame:
-    """Mean of `values` at each level of each factor, with delta and rank."""
+def response_table(values: pd.Series, factors: pd.DataFrame, ws=None) -> pd.DataFrame:
+    """Mean of `values` at each level of each factor, with delta and rank (levels in `ws`'s value order)."""
     columns = {}
     for name in factors.columns:
-        columns[name] = values.groupby(factors[name].map(format_value)).mean()
-    table = pd.DataFrame(columns)
+        means = values.groupby(factors[name].map(format_value)).mean()
+        columns[name] = means.reindex(ws.levels(name, pd.Series(means.index))) if ws is not None else means
+    order = list(dict.fromkeys(level for m in columns.values() for level in m.index)) if ws is not None else None
+    table = pd.DataFrame(columns, index=order)
     table.index = [f"{tr('Level')} {i}" for i in table.index]
     delta = table.max() - table.min()
     table.loc["Delta"] = delta
@@ -995,13 +997,14 @@ def analyze_taguchi(ws, responses, factors, kind=SN_RATIOS[0]):
     means = pd.Series(values.mean(axis=1), index=frame.index)
     res = Result("Analyze Taguchi Design")
     res.text(f"{tr('Signal-to-noise ratio')}: {tr(kind)}")
-    res.table(response_table(sn, frame[factors]), title="Response Table for Signal-to-Noise Ratios")
-    res.table(response_table(means, frame[factors]), title="Response Table for Means")
+    res.table(response_table(sn, frame[factors], ws), title="Response Table for Signal-to-Noise Ratios")
+    res.table(response_table(means, frame[factors], ws), title="Response Table for Means")
     fig = new_figure(max(5.0, 2.6 * len(factors)), 6.0)
     axes = fig.subplots(2, len(factors), sharey="row", squeeze=False)
     for row, (series, label) in enumerate(((sn, tr("Mean of S/N ratios")), (means, tr("Mean of means")))):
         for ax, factor in zip(axes[row], factors):
             level_means = series.groupby(frame[factor].map(format_value)).mean()
+            level_means = level_means.reindex(ws.levels(factor, pd.Series(level_means.index)))
             ax.plot(list(level_means.index), level_means.to_numpy(), "-o", color=BLUE)
             ax.axhline(series.mean(), color=GRAY, linestyle="--")
             ax.set_xlabel(factor)

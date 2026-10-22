@@ -292,7 +292,7 @@ def discriminant(ws, groups, predictors, kind="Linear", cross_validate=False, st
     rows = complete_rows(ws, [groups] + predictors)
     X = ws.df[predictors].iloc[rows].to_numpy(dtype=float)
     y = ws.df[groups].iloc[rows].map(format_value).to_numpy()
-    levels = sorted(set(y))
+    levels = ws.levels(groups, pd.Series(y))
     if len(levels) < 2:
         raise ValueError("At least two groups are needed")
     priors = np.full(len(levels), 1 / len(levels))
@@ -320,7 +320,7 @@ def discriminant(ws, groups, predictors, kind="Linear", cross_validate=False, st
         coef = model.means_ @ inverse
         const = -0.5 * np.einsum("ij,ij->i", coef, model.means_)
         function = pd.DataFrame(np.vstack([const, coef.T]), index=pd.Index(["Constant"] + predictors, name="Term"),
-                                columns=list(model.classes_))
+                                columns=list(model.classes_))[levels]
         res.table(function, title="Linear Discriminant Function for Groups")
     if store:
         out = np.full(ws.nrows, None, dtype=object)

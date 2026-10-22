@@ -139,6 +139,7 @@ def friedman(ws, response, treatment, block):
     frame = ws.df[[response, treatment, block]].dropna()
     wide = frame.pivot_table(index=frame[block].map(format_value), columns=frame[treatment].map(format_value),
                              values=response, aggfunc="mean").dropna()
+    wide = wide[ws.levels(treatment, pd.Series(wide.columns))]
     b, k = wide.shape
     if b < 2 or k < 3:
         raise ValueError("Friedman's test needs at least three treatments and two complete blocks")

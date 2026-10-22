@@ -148,3 +148,36 @@ def test_one_way_anova_stores_fits_by_row(g, order):
     res = anova.one_way(ws, "y", "g", store=True)
     assert res.stored["FITS_y"] == [1.5, 1.5, 10.5, 10.5, 20.5, 20.5]
     assert res.stored["RESI_y"] == [-0.5, 0.5, -0.5, 0.5, -0.5, 0.5]
+
+
+def test_discriminant_and_classification_follow_value_order(sample_ws):
+    sample_ws.value_orders["Group"] = REVERSED
+    summary = tables_of(multivariate.discriminant(sample_ws, "Group", ["X", "Z"]))[0]
+    assert list(summary.columns) == REVERSED
+    res = predictive.cart_classification(sample_ws, "Group", continuous=["X", "Z"], folds=0)
+    confusion = next(t for t in tables_of(res) if t.index.name == "Actual class")
+    assert list(confusion.index) == list(confusion.columns) == REVERSED
+
+
+def test_life_data_by_variable_follows_value_order(sample_ws):
+    from openstat.stats import reliability
+
+    sample_ws.value_orders["Group"] = REVERSED
+    assert list(tables_of(reliability.nonparametric_analysis(sample_ws, "Y", by="Group"))[0].index) == REVERSED
+    titles = [block[1][1] for block in reliability.failure_modes(sample_ws, "Y", "Group").blocks
+              if block[0] == "table" and "Failure mode" in str(block[1][1])]
+    assert [t.split(": ")[1][0] for t in titles] == REVERSED
+
+
+def test_friedman_follows_value_order(sample_ws):
+    from openstat.stats import nonparametric
+
+    sample_ws.value_orders["Group"] = REVERSED
+    assert list(tables_of(nonparametric.friedman(sample_ws, "Y", "Group", "Block"))[0].index) == REVERSED
+
+
+def test_taguchi_response_table_follows_value_order():
+    ws = Worksheet("W", pd.DataFrame({"y1": [1.0, 3, 10, 12], "y2": [2.0, 4, 11, 13], "A": ["lo", "lo", "hi", "hi"]}))
+    ws.value_orders["A"] = ["lo", "hi"]
+    table = tables_of(doe.analyze_taguchi(ws, ["y1", "y2"], ["A"]))[0]
+    assert list(table.index[:2]) == ["Level lo", "Level hi"]

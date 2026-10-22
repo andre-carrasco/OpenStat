@@ -195,7 +195,7 @@ def nonparametric_analysis(ws, time, censor=None, censor_value="0", by=None, con
     fig = new_figure()
     ax = fig.add_subplot()
     summary = {}
-    for i, level in enumerate(sorted(set(labels))):
+    for i, level in enumerate(ws.levels(by, pd.Series(labels)) if by else [time]):
         mask = labels == level
         if not failed[mask].any():
             continue
@@ -593,7 +593,7 @@ def failure_modes(ws, time, mode, distribution="Weibull", confidence=95.0):
     frame = ws.df[[time, mode]].dropna(subset=[time])
     t = frame[time].to_numpy(dtype=float)
     labels = frame[mode].map(lambda v: None if pd.isna(v) else format_value(v)).to_numpy()
-    modes = sorted({m for m in labels if m is not None})
+    modes = ws.levels(mode, pd.Series([m for m in labels if m is not None], dtype=object))
     if not 1 <= len(modes) <= MAX_MODES:
         raise ValueError(f"Between 1 and {MAX_MODES} failure modes are needed")
     res = Result("Parametric Distribution Analysis (Multiple Failure Modes)")

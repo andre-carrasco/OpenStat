@@ -172,7 +172,8 @@ def _fit_report(title: str, kind: str, classify: bool, ws, response, continuous,
         else:
             actual, shown, name = y, fitted, "Confusion Matrix"
         confusion = pd.crosstab(pd.Series(actual, name="Actual class"), pd.Series(shown, name="Predicted class"))
-        confusion = confusion.reindex(index=classes, columns=classes, fill_value=0)
+        shown_order = ws.levels(response, pd.Series(classes))   # `classes` stays sorted: it indexes the probabilities
+        confusion = confusion.reindex(index=shown_order, columns=shown_order, fill_value=0)
         confusion.index.name = "Actual class"
         res.table(confusion, title=name)
     if kind == "mars":
