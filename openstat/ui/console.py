@@ -118,6 +118,9 @@ class Console(QWidget):
             new_df = self.namespace.get("df")
             if isinstance(new_df, pd.DataFrame):
                 ws.df = normalize_frame(new_df)   # whatever the command produced, in worksheet form
+                for store in (ws.formats, ws.descriptions, ws.value_orders):
+                    for name in set(store) - set(ws.df.columns):
+                        del store[name]
                 ws.recalculate()
         self.window_.view_of(ws).change("Command Line", apply)
         output = buffer.getvalue().rstrip()

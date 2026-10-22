@@ -48,6 +48,14 @@ def test_console_edits_the_worksheet_and_runs_analyses(window):
     assert "basic.describe" in console.execute("analyses('descr')")
 
 
+def test_console_drops_properties_of_removed_columns(window):
+    ws = window.current_worksheet()
+    ws.descriptions["A"], ws.value_orders["A"], ws.formats["A"] = "d", "occurrence", [{"rule": "x"}]
+    ws.descriptions["B"] = "kept"
+    window.console.execute("df = df.drop(columns=['A'])")
+    assert (ws.descriptions, ws.value_orders, ws.formats) == ({"B": "kept"}, {}, {})
+
+
 def test_formulas_dates_and_worksheet_parameters(window):
     from PySide6.QtCore import Qt
 
