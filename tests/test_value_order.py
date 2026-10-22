@@ -137,3 +137,14 @@ def test_predict_codes_points_with_the_fit_levels(sample_ws):
         res = regression.predict(sample_ws, "Y", categorical=["Group"], values="Group=A; Group=B; Group=C; Group=D")
         fits = tables_of(res)[0]["Fit"].to_numpy()
         assert fits == pytest.approx(used.groupby("Group")["Y"].mean().loc[list("ABCD")].to_numpy())
+
+
+@pytest.mark.parametrize("g, order", [([2, 2, 10, 10, 30, 30], None),
+                                      (["a", "a", "b", "b", "c", "c"], ["c", "b", "a"])])
+def test_one_way_anova_stores_fits_by_row(g, order):
+    ws = Worksheet("W", pd.DataFrame({"y": [1.0, 2, 10, 11, 20, 21], "g": g}))
+    if order:
+        ws.value_orders["g"] = order
+    res = anova.one_way(ws, "y", "g", store=True)
+    assert res.stored["FITS_y"] == [1.5, 1.5, 10.5, 10.5, 20.5, 20.5]
+    assert res.stored["RESI_y"] == [-0.5, 0.5, -0.5, 0.5, -0.5, 0.5]

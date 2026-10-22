@@ -235,9 +235,10 @@ def one_way(ws, response, factor, comparisons="None", welch=False, confidence=95
         res.figure(residual_plots(fits, resid, response))
     if store:
         rows = complete_rows(ws, [response, factor])
-        order = np.argsort(ws.df[factor].iloc[rows].map(format_value).to_numpy(), kind="stable")
+        level_means = {level: g.mean() for level, g in groups.items()}
         fit_col, resid_col = np.full(ws.nrows, np.nan), np.full(ws.nrows, np.nan)
-        fit_col[rows[order]], resid_col[rows[order]] = fits, resid
+        fit_col[rows] = ws.df[factor].iloc[rows].map(format_value).map(level_means).to_numpy(dtype=float)
+        resid_col[rows] = ws.df[response].iloc[rows].to_numpy(dtype=float) - fit_col[rows]
         res.store(f"FITS_{response}", fit_col.tolist()).store(f"RESI_{response}", resid_col.tolist())
     return res
 
