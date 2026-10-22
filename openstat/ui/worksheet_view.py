@@ -209,10 +209,7 @@ class WorksheetModel(QAbstractTableModel):
         return True
 
     def set_cells(self, cells, text: str = "Typing") -> None:
-        def apply():
-            for row, col, value in cells:
-                self.ws.set_cell(row, col, value)
-        self.change(text, apply)
+        self.change(text, lambda: self.ws.set_cells(cells))
         self.refresh()
 
     def refresh(self) -> None:

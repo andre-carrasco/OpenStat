@@ -156,16 +156,26 @@ class Worksheet:
         return format_value(self.df.iat[row, col])
 
     def set_cell(self, row: int, col: int, text) -> None:
-        value = parse_cell(text)
-        if value is None and (row >= self.nrows or col >= self.ncols):
-            return
-        self.ensure_size(row + 1, col + 1)
-        name = self.df.columns[col]
-        current = self._values(name)
-        # a date typed into a text column stays as it was typed
-        current[row] = str(text).strip() if isinstance(value, datetime) else value
-        self._put(name, current)
-        self.recalculate()
+        self.set_cells([(row, col, text)])
+
+    def set_cells(self, cells) -> None:
+        """Type each (row, col, text), putting each column once and recalculating once."""
+        edits: dict[int, dict[int, object]] = {}
+        for row, col, text in cells:
+            value = parse_cell(text)
+            if value is None and (row >= self.nrows or col >= self.ncols):
+                continue
+            self.ensure_size(row + 1, col + 1)
+            # a date typed into a text column stays as it was typed
+            edits.setdefault(col, {})[row] = str(text).strip() if isinstance(value, datetime) else value
+        for col, rows in edits.items():
+            name = self.df.columns[col]
+            current = self._values(name)
+            for row, value in rows.items():
+                current[row] = value
+            self._put(name, current)
+        if edits:
+            self.recalculate()
 
     def _values(self, name: str) -> list:
         return [None if pd.isna(v) else v for v in self.df[name].tolist()]

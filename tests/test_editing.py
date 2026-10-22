@@ -126,3 +126,13 @@ def test_levels_label_missing_from_column_goes_last():
     assert ws.levels("T", pd.Series(["z", "a", "y"])) == ["a", "y", "z"]
     ws.value_orders["T"] = "occurrence"
     assert ws.levels("T", pd.Series(["z", "a", "b", "y"])) == ["b", "a", "y", "z"]
+
+
+def test_set_cells_matches_sequential_set_cell():
+    cells = [(0, 0, "abc"), (1, 0, "5"), (0, 0, "9"), (0, 1, "2024-01-02"), (1, 1, "1"), (2, 1, "2"),
+             (10, 0, ""), (4, 3, "7"), (2, 0, "")]
+    one, batch = ws_ab(), ws_ab()
+    for r, c, text in cells:
+        one.set_cell(r, c, text)
+    batch.set_cells(cells)
+    pd.testing.assert_frame_equal(batch.df, one.df)

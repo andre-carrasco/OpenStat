@@ -112,10 +112,7 @@ class FindDialog(QDialog):
         hits = [(r, c) for r in range(ws.nrows) for c in range(ws.ncols)
                 if (columns is None or c in columns)
                 and _matches(ws.get_text(r, c), self.find_text.text(), *self._options())]
-        def apply():
-            for r, c in hits:
-                ws.set_cell(r, c, self._new_text(ws.get_text(r, c)))
         if hits:
-            view.change("Replace", apply)
+            view.change("Replace", lambda: ws.set_cells([(r, c, self._new_text(ws.get_text(r, c))) for r, c in hits]))
             view.refresh()
         self.status.setText(tr("{n} cells replaced").format(n=len(hits)) if hits else tr("Not found"))
